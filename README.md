@@ -9,14 +9,15 @@
 ## 目录
 
 - [1. esp-dl 是什么](#1-esp-dl-是什么)
-- [2. 从模型到芯片的完整流程](#2-从模型到芯片的完整流程)
-- [3. 模型量化（esp-ppq）](#3-模型量化esp-ppq)
-- [4. C++ 端使用 esp-dl](#4-c-端使用-esp-dl)
-- [5. 实战踩坑（重点）](#5-实战踩坑重点)
-- [6. ESP32-P4 平台配置](#6-esp32-p4-平台配置)
-- [7. esp-who 框架速览](#7-esp-who-框架速览)
-- [8. 速查命令](#8-速查命令)
-- [9. 参考](#9-参考)
+- [2. 模型的基本组成与 esp-dl 的差异（初学者）](#2-模型的基本组成与-esp-dl-的差异初学者)
+- [3. 从模型到芯片的完整流程](#3-从模型到芯片的完整流程)
+- [4. 模型量化（esp-ppq）](#4-模型量化esp-ppq)
+- [5. C++ 端使用 esp-dl](#5-c-端使用-esp-dl)
+- [6. 实战踩坑（重点）](#6-实战踩坑重点)
+- [7. ESP32-P4 平台配置](#7-esp32-p4-平台配置)
+- [8. esp-who 框架速览](#8-esp-who-框架速览)
+- [9. 速查命令](#9-速查命令)
+- [10. 参考](#10-参考)
 
 ---
 
@@ -45,7 +46,114 @@ Espressif 官方的端侧深度学习推理框架（C++），在 ESP32-S3 / ESP3
 
 ---
 
-## 2. 从模型到芯片的完整流程
+## 2. 模型的基本组成与 esp-dl 的差异（初学者）
+
+> 这一节是概念铺垫：先讲"一个模型到底是什么"，再讲 esp-dl 跑的模型和你在 PC 上训练出来的模型差在哪。
+> 有基础的读者可以直接跳到第 3 节。
+
+### 2.1 一个模型 = 结构 + 参数
+
+训练出来的"模型"可以拆成两部分：
+
+1. **结构（计算图 / graph）**：由**算子（operator / layer）**和它们之间的连接组成。
+   常见算子：`Conv`（卷积）、`Gemm`/`Linear`（全连接）、`ReLU`/`Sigmoid`（激活）、`MaxPool`（池化）、`Concat`（拼接）、`Reshape`、`Softmax`……
+   结构决定"数据怎么流动"：输入 → 算子 1 → 算子 2 → … → 输出。
+2. **参数（parameters / weights）**：每个算子内部可学习的数值，主要是**权重 weight** 和**偏置 bias**。
+   YOLOv8n 约有 300 万参数，int8 量化后约 3 MB —— 这就是"模型大小"的主要部分。
+
+另外几个必须区分的概念：
+
+- **激活值（activation）**：推理时每层算出来的**中间结果**，不是训练出来的参数，**随输入变化**（换一张图片，每层输出都不同）。量化时"激活的 scale"要靠校准数据统计，原因就在这里。
+- **中间张量（intermediate tensor）**：除输入/输出之外的所有张量，是运行时内存占用的主要来源。
+- **超参数（hyperparameter）**：不是学出来的，是人定的，例如学习率、输入分辨率 640×640、类别数。
+- **算子 vs 层**：日常混用；严格说"层"是结构概念（如一个卷积层），"算子"是计算概念（如 Conv + Bias + ReLU 可能被融合成一个算子）。
+
+### 2.2 推理 vs 训练
+
+| | 训练（training） | 推理（inference） |
+|---|---|---|
+| 计算方向 | 前向 + 反向传播 | 只有前向 |
+| 需要什么 | 梯度、损失函数、优化器、大量数据 | 一张输入图 → 一组输出 |
+| 产物 | 权重（`.pth`） | 可部署的模型文件（`.espdl`） |
+
+部署时只保留**前向图**，所以部署文件通常比训练框架的检查点小得多。esp-dl 只做推理，不做训练。
+
+### 2.3 张量与内存布局
+
+**张量（tensor）** = 多维数组 + 数据类型 + 形状 + 内存布局。
+
+- **形状**：图像模型常见 `[N, C, H, W]`（batch、通道、高、宽）；**esp-dl 只支持 batch N = 1**。
+- **数据类型**：训练用 `float32`；量化后 esp-dl 用 `int8`（权重/激活）和 `int32`（bias 累加）。
+- **内存布局**：同一张图，`NCHW` 和 `NHWC` 在内存里的排法不同；做颜色转换、resize 时必须和模型的预期一致。
+- **像素格式**也是一种"布局"：摄像头常输出 `RGB565`（2 字节/像素），训练常用 `RGB888`（3 字节）——`ImagePreprocessor` 负责转换。
+
+### 2.4 常见模型文件格式
+
+| 格式 | 里面有什么 | 能直接部署到 esp-dl 吗 |
+|---|---|---|
+| PyTorch `.pth` | **只有权重**，结构在 Python 代码里 | 不能（需要 PyTorch 解释器） |
+| ONNX `.onnx` | 结构 + 权重 + 输入输出签名 + opset，**自包含** | 不能，需先量化成 `.espdl` |
+| TensorFlow Lite `.tflite` | 结构 + 权重（自带解释器约定） | 不能，先转 ONNX 再量化 |
+| **`.espdl`** | **esp-dl 自己的图 + int8 权重 + 量化参数** | 能 |
+
+> 关键点：`.pth` 和 `.onnx` 的区别不是"是不是权重文件"，而是 **ONNX 自包含**——`.onnx` 的 `graph.initializer` 里就存着训练好的权重（详见 4.5 节）。
+
+### 2.5 浮点模型 → 量化模型
+
+量化就是把 float32 的数值映射到 int8：
+
+```
+量化：    q = round(x / scale) + zero_point
+反量化：  x ≈ (q - zero_point) * scale
+```
+
+- **`scale`** 决定 int8 能表示的数值范围（`scale × 127` 就是上限）。
+- **per-tensor**：整个张量共用一个 scale；**per-channel**：每个输出通道一个 scale。esp-dl 的权重多用 per-channel，精度更好。
+- **校准（calibration）**：用一批真实输入跑一遍 float 模型，统计每层激活值的范围 → 算出激活的 scale。这就是 `calib_dataloader` 的作用。
+- **esp-dl 的特殊表示**：它的 `exponent` 其实就是"scale 用 2 的幂表示"（`scale = 2^exponent`），反量化时可以用移位/查表实现，对没有浮点加速的 MCU 更友好。`.info` 里看到的 `exponents: [-4]` 就是 `scale = 2^-4 = 0.0625`。
+
+### 2.6 通用模型 vs esp-dl 的模型：核心差异
+
+| 维度 | 通用模型（ONNX / PyTorch） | esp-dl 的 `.espdl` |
+|---|---|---|
+| 文件格式 | Protobuf（ONNX）/ pickle（pth） | **FlatBuffers**（可按偏移直接访问，几乎零解析开销） |
+| 算子集合 | 通用、几百个 | esp-dl 自己实现的 Module 子集；**不支持的算子部署不了** |
+| 数值类型 | float32 为主 | **int8 权重/激活 + int32 bias + exponent** |
+| 输入形状 | 可动态、可多 batch | **固定**（量化时定死），batch 只能是 1 |
+| 内存分配 | 框架运行时动态分配 | **静态内存规划**：加载/规划阶段一次性分配，中间张量按生命周期复用 |
+| 执行方式 | 解释器逐个算子调度 | **execution plan**：一串 `Module` 按顺序 `forward()`；大算子可选双核拆分 |
+| 预处理/后处理 | 图外自己写（Python/C++） | 内置 `ImagePreprocessor` + 检测/分类后处理器 |
+| 硬件相关 | 通用 | 和芯片绑定（SIMD/PIE 指令、量化规则），**`.espdl` 不能跨芯片通用** |
+
+一句话概括：**通用模型是"给 PC/GPU 的通用计算描述"，`.espdl` 是"为某一颗 MCU 编译过的、内存和指令都排好的可执行计划"。**
+
+### 2.7 一次推理在 esp-dl 里的生命周期
+
+把上面的概念串起来：
+
+```
+1. 加载    dl::Model 读 .espdl（FlatBuffers），拿到 module 列表和 int8 权重
+2. 规划    minimize() 去掉推理用不到的变量；静态分配中间张量（按生命周期复用）
+3. 预处理  ImagePreprocessor：颜色转换 + resize/letterbox → 填进模型输入张量
+4. 前向    model.run()：按 execution plan 依次 forward 每个 Module
+             ├─ 输入/输出都是 int8 张量
+             ├─ 每个张量带自己的 exponent（反量化用）
+             └─ 大卷积可选双核拆分（RUNTIME_MODE_MULTI_CORE）
+5. 取输出  get_output("名字") → TensorBase（int8 数据 + exponent）
+6. 后处理  模型外的 C++ 代码：反量化、解码框、NMS、画到屏幕上
+```
+
+### 2.8 给初学者的几个"常识校正"
+
+- **"模型多大"和"运行占多少内存"是两回事**：权重可以放 flash/PSRAM；运行时还要分配激活/中间张量，这部分往往比权重还大（检测模型尤其明显）。
+- **推理速度不等于参数量**：yolov8n 参数量不大，但 640×640 的计算量（约 8.7 GFLOPs）才是耗时的原因。
+- **量化不是"压缩文件"那么简单**：它改变数值精度，有些算子对量化很敏感（分数、小数值），处理不好会掉点（见 6.1 节）。
+- **`model_input` 的 buffer 会被复用**：不要把输入/输出张量的指针长期保存，用完立即取值或拷走。
+- **模型文件不能跨芯片通用**：量化时 `target` 不同，量化规则/算子实现都不同，S3 的 `.espdl` 不能丢给 P4 跑。
+
+---
+
+## 3. 从模型到芯片的完整流程
 
 ```
 训练 (PyTorch / 其他框架)
@@ -60,9 +168,9 @@ esp-dl 只支持 **batch = 1**，所有环节（导出、量化、推理）都�
 
 ---
 
-## 3. 模型量化（esp-ppq）
+## 4. 模型量化（esp-ppq）
 
-### 3.1 两个入口
+### 4.1 两个入口
 
 `esp_ppq.api` 提供两个函数，量化后端完全相同，区别只在**图从哪来**：
 
@@ -81,7 +189,7 @@ return espdl_quantize_onnx(onnx_import_file="<name>.onnx", ...)
 
 **所以 torch 版只是"自动导出 ONNX"的便捷封装。** 另外它导出时用的是 `<espdl 文件名>.onnx`，会**覆盖同名 ONNX 文件**，需要保留原始导出的话请换名或先备份。
 
-### 3.2 参数
+### 4.2 参数
 
 | 参数 | 说明 |
 |---|---|
@@ -97,7 +205,7 @@ return espdl_quantize_onnx(onnx_import_file="<name>.onnx", ...)
 | `export_test_values` | 导出 C++ 对拍用的测试输入/期望输出 |
 | `verbose` | 日志详细程度 |
 
-### 3.3 产物
+### 4.3 产物
 
 以 `quantize_sin_model` 为例：
 
@@ -119,13 +227,13 @@ graph main_graph (
 )
 ```
 
-### 3.4 校准数据
+### 4.4 校准数据
 
 - `calib_dataloader` **`shuffle` 必须为 `False`**：量化误差分析会多次遍历数据集，顺序变了误差就不可比。
 - 校准数据要覆盖真实输入的分布（比如摄像头截帧），不要用纯随机数，否则激活值的 scale 会定得离谱。
 - 数据量不用很大：`calib_steps × batch_size` 覆盖分布即可（示例是 32×32）。
 
-### 3.5 ONNX 文件为什么"自带权重"
+### 4.5 ONNX 文件为什么"自带权重"
 
 PyTorch 里结构在代码、权重在 `.pth`；**ONNX 是自包含的**：
 
@@ -146,7 +254,7 @@ fc3.weight [1,64]  fc3.bias [1]
 
 > 大模型（> 2 GB protobuf 上限）会把权重拆到 `model.onnx.data`，`.onnx` 里只存引用，两个文件要一起带。小模型看到孤立的 `.onnx.data` 一般是被 `onnxsim`/重写后内联留下的残留，可以删。
 
-### 3.6 量化后验证
+### 4.6 量化后验证
 
 torch 入口可以拿回 PPQ 图，用 `TorchExecutor` 在 PC 上跑**模拟量化推理**，和原模型比 loss：
 
@@ -158,9 +266,9 @@ y_quant = executor(batch_x)[0]
 
 ---
 
-## 4. C++ 端使用 esp-dl
+## 5. C++ 端使用 esp-dl
 
-### 4.1 模型放哪里
+### 5.1 模型放哪里
 
 esp-dl 的模型加载支持三种位置（由组件 Kconfig 选择，函数签名里的 `location` 参数与之对应）：
 
@@ -172,7 +280,7 @@ esp-dl 的模型加载支持三种位置（由组件 Kconfig 选择，函数签�
 
 开启 `SPIRAM_RODATA` / `SPIRAM_XIP_FROM_PSRAM` 时，加载日志会提示 **fbs 模型被拷贝到 PSRAM**（大模型推荐）。
 
-### 4.2 加载与推理（示意）
+### 5.2 加载与推理（示意）
 
 ```cpp
 #include "dl_model_base.hpp"
@@ -207,15 +315,15 @@ dl::TensorBase *out = model.get_output("/model.22/Sigmoid_output_0");
   `get_resize_scale_x(true)` / `get_resize_scale_y(true)`（`true` = 取逆缩放）、`get_border_left()` / `get_border_top()`。
 - 张量反量化：`float v = dl::dequantize(int8_value, DL_SCALE(tensor->exponent))`。
 
-### 4.3 lazy_load
+### 5.3 lazy_load
 
 `DetectWrapper` 的子类（如官方 `HumanFaceDetect`）默认参数是 **`lazy_load = true`**：模型推迟到第一次 `run()` 才加载。**官方所有 example 调用时都传 `false`**（在 `app_main` 里、任务启动前加载），大模型尤其应该这样，避免和摄像头/显示流水线并发加载。
 
 ---
 
-## 5. 实战踩坑（重点）
+## 6. 实战踩坑（重点）
 
-### 5.1 朴素 YOLOv8 导出会让分数全归零
+### 6.1 朴素 YOLOv8 导出会让分数全归零
 
 **症状**：检测框能出来，但 score 全是 0（或全部低于阈值）。
 
@@ -225,7 +333,7 @@ dl::TensorBase *out = model.get_output("/model.22/Sigmoid_output_0");
 
 **经验**：量化前先看 `.info` 里各输出的 `exponent`/scale。如果某个张量的可表示范围明显小于它需要的范围（例如 score 只能表示到 0.248），就是 scale 被别的张量拖累了。
 
-### 5.2 P4 没有 NPU：耗时估算与输入尺寸
+### 6.2 P4 没有 NPU：耗时估算与输入尺寸
 
 ESP32-P4 实测（yolov8n，int8）：
 
@@ -246,7 +354,7 @@ detect: post:  22~46 ms   ← 后处理
 
 **耗时几乎全在推理**，预处理/后处理可以忽略。缩小输入是唯一有效的提速手段；换输入尺寸后记得改后处理器里的 `num_anchors`（8400 / 4725 / 3024 / 2100）。
 
-### 5.3 `cam_fb_peek()` 的 use-after-free（esp-who）
+### 6.3 `cam_fb_peek()` 的 use-after-free（esp-who）
 
 **崩溃指纹**：
 
@@ -262,7 +370,7 @@ MTVAL ≈ 0x4FFC0000            ← 内部 SRAM 的最高地址
 
 > 识别例子 `WhoRecognitionAppLCD` 给 `WhoFrameLCDDisp` 传 `peek_index = 1` 是对同一问题的部分规避（index 0 是最先被删的那一帧），不是设计意图。
 
-### 5.4 慢模型 + Yield2Idle：一个框都画不出来
+### 6.4 慢模型 + Yield2Idle：一个框都画不出来
 
 `WhoDetectAppLCD` + 秒级推理的模型会出现"**画面正常但永远没有框**"，换快模型（~0.1 s）就正常——**快推理把下面两个坑掩盖了**：
 
@@ -271,7 +379,7 @@ MTVAL ≈ 0x4FFC0000            ← 内部 SRAM 的最高地址
 2. **暂停时的 `cleanup()` 会清掉结果**。`cleanup_for_paused()` → `WhoDetect::cleanup()` → `WhoDetectResultLCDDisp::cleanup()` 清 `m_results` + `m_result`。而检测任务的暂停应答**恰好发生在推理结束、结果刚存进来的那一刻** → 结果在显示任务看到之前就被清掉（实测 `save: items=1` 之后 44 ms 的 draw 就是 `queue=0 items=0`）。
    **改法**：暂停时什么都不清，只在真正 stop 时清。
 
-### 5.5 显示与检测的时间戳对齐
+### 6.5 显示与检测的时间戳对齐
 
 `WhoDetectResultLCDDisp::lcd_disp_cb()` 只画"时间戳不晚于当前显示帧"的结果：
 
@@ -281,7 +389,7 @@ if (displayed_fb.timestamp >= result.timestamp) { 显示 } else { 等待 }
 
 上游的设计是**让显示端看 ringbuf 里较旧的一帧**（识别例子 `peek_index = 1`），使"画面"和"检测结果对应的帧"对齐。这个把戏只在推理延迟 < 显示延迟（≈ 一两帧）时成立；推理几秒的模型，框必然落后画面几秒——**唯一解是加快推理**（缩小输入/换小模型）。
 
-### 5.6 分数标注：字段有，但上游不填
+### 6.6 分数标注：字段有，但上游不填
 
 `draw_item_t` 有 `label` 字段，`draw_items_on_canvas()` 也会渲染它，但上游的 `save_detect_result()` 从来不赋值 → 框上一直没有文字。自己填：
 
@@ -293,7 +401,7 @@ item.label = label;
 
 注意框坐标可能是**负的**（模型常给出 `[102,-6,1024,403]`），标签起点要夹进画布，否则文字画到屏幕外。
 
-### 5.7 PPA 缩放的 1/16 量化规则
+### 6.7 PPA 缩放的 1/16 量化规则
 
 esp-dl 的 `resize_ppa()` 把缩放比存成 `int + frac/16`，实际写出的尺寸是
 `in.block_w * scale_int + in.block_w * scale_frac / 16`，不足的部分留右/下黑边。
@@ -308,13 +416,13 @@ esp-dl 的 `resize_ppa()` 把缩放比存成 `int + frac/16`，实际写出的�
 
 换成 640×375（scale 1.6 → 1.5625）就会留 24 列 × 15 行黑边。
 
-### 5.8 USB UVC 摄像头的坑（esp-who）
+### 6.8 USB UVC 摄像头的坑（esp-who）
 
 1. **`usb_host_uvc` 2.4.2 会把 `urb_size` 压到摄像头的 `dwMaxPayloadTransferSize`**（`uvc_host.c:838`），配置的 10240 会塌成 3072 = 一个 ISOC 包 → 满屏 `frame error` / `missed EoF`。该 clamp 在 **2.5.0** 移除。BSP 5.2.3 的依赖链锁在 `esp_video 2.0.1` → `usb_host_uvc 2.4.*`，只能本地 patch `managed_components`（重新解析依赖会丢）。
 2. **`VideoCapture` 没有设置 `VIDIOC_S_DQBUF_TIMEOUT`**，继承 esp_video 的 `portMAX_DELAY`：UVC 真卡住时 `DQBUF` 会永久阻塞，画面冻结。可以自己设 1 s 超时。
 3. 残留的 `usb err 1` / `missed EoF`（~0.3/s）与供电、温度无关，属正常范围。
 
-### 5.9 Phantom Kconfig symbol
+### 6.9 Phantom Kconfig symbol
 
 IDF 5.5.3 + 组件管理器：依赖规则引用了**本地没有任何组件定义的 Kconfig 符号**时，`prepare.py` 会直接退出（`Missing required kconfig option after retry`）。
 
@@ -328,7 +436,7 @@ config ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION
 
 无提示的隐藏符号在值为 `n` 时会被 kconfiglib 省略，组件管理器读不到，等于没定义。
 
-### 5.10 依赖版本要钉住
+### 6.10 依赖版本要钉住
 
 组件管理器会把 `~` 版本浮动到最新。实测踩过：
 
@@ -340,9 +448,9 @@ config ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION
 
 ---
 
-## 6. ESP32-P4 平台配置
+## 7. ESP32-P4 平台配置
 
-### 6.1 芯片版本（v1.3）
+### 7.1 芯片版本（v1.3）
 
 IDF 5.5 对 esp32p4 的默认最低芯片版本是 v3.0，v1.3 的板子必须在 `sdkconfig.defaults` 里放开：
 
@@ -353,16 +461,16 @@ CONFIG_ESP32P4_REV_MIN_0=y
 
 不写会报 `Target doesn't support chip revision`。代价：**flash 频率被压到 40 MHz**（烧录命令行里能看到 `--flash_freq 40m`）。
 
-### 6.2 Flash 与启动布局
+### 7.2 Flash 与启动布局
 
 - 板载 16 MB，`CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`
 - P4 的烧录偏移：bootloader `0x2000`、分区表 `0x8000`、app `0x10000`（与 S3 的 `0x0/0x8000/0x10000` 不同）
 
-### 6.3 控制台
+### 7.3 控制台
 
 ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART_DEFAULT` + `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG`）。`/dev/ttyACM0` 能直接看到日志。
 
-### 6.4 ESP32-S3 → ESP32-P4 迁移清单
+### 7.4 ESP32-S3 → ESP32-P4 迁移清单
 
 1. `idf.py set-target esp32p4`（旧的 `build/` 最好先删；半截目录 `fullclean` 会拒绝清理）
 2. **SPI 主机名兼容**：P4 有三个 SPI 外设，`SPI1_HOST=0 / SPI2_HOST=1 / SPI3_HOST=2`，S3 代码里的 `SPI2_HOST` 可以直接用
@@ -373,9 +481,9 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 
 ---
 
-## 7. esp-who 框架速览
+## 8. esp-who 框架速览
 
-### 7.1 数据管线
+### 8.1 数据管线
 
 ```
 摄像头 (MIPI-CSI 或 USB-UVC)
@@ -387,7 +495,7 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
             └→ WhoDetectResultLCDDisp：把框画进 canvas 的 layer
 ```
 
-### 7.2 关键类
+### 8.2 关键类
 
 | 类 | 作用 |
 |---|---|
@@ -396,9 +504,9 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 | `WhoDetectAppBase` / `WhoDetectAppLCD` | 组装采集+检测+显示+画框 |
 | `WhoFrameLCDDisp` | 把 fb 设为 LVGL canvas 缓冲并刷新（可选 `peek_index`） |
 | `WhoDetectResultLCDDisp` | 保存检测结果，在 `lcd_disp_cb` 里画框/文字 |
-| `WhoYield2Idle` | 定期暂停任务让 CPU 进 idle（**慢模型下是坑的来源**，见 5.4） |
+| `WhoYield2Idle` | 定期暂停任务让 CPU 进 idle（**慢模型下是坑的来源**，见 6.4） |
 
-### 7.3 线程与核心
+### 8.3 线程与核心
 
 - 帧管线节点、LCD 显示任务：核心 0，优先级 2
 - 检测任务：核心 1，优先级 2
@@ -406,7 +514,7 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 
 ---
 
-## 8. 速查命令
+## 9. 速查命令
 
 ```bash
 # 编译 / 烧录 / 监视
@@ -428,7 +536,7 @@ python quantize_onnx_model.py     # 或 quantize_torch_model.py
 
 ---
 
-## 9. 参考
+## 10. 参考
 
 - esp-dl 仓库：<https://github.com/espressif/esp-dl>
 - esp-ppq（量化工具）：<https://github.com/espressif/esp-ppq>
