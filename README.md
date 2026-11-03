@@ -45,6 +45,54 @@ Espressif 官方的端侧深度学习推理框架（C++），在 ESP32-S3 / ESP3
 | `vision/detect` | `Detect` / `DetectImpl` / `DetectWrapper` / 各种后处理器 |
 | `vision/classification`、`vision/recognition`、`audio` | 其他任务 |
 
+### esp-dl 在 TinyML / TFLite 生态中的位置
+
+TinyML 是**一个领域**（在资源受限 MCU 上跑模型），不是一个具体框架。ESP32 上有两条常见实现路线：
+
+```
+TinyML（领域）
+├── 路线 A：TFLite Micro + esp_nn   ← 通用生态路线
+└── 路线 B：esp-dl + esp-ppq        ← Espressif 自研路线
+```
+
+| 名称 | 是什么 | 不是什么 |
+|---|---|---|
+| **TinyML** | 领域：资源受限 MCU 上的本地推理 | 不是某个具体框架 |
+| **TFLite Micro (TFLM)** | 运行时 + 模型格式（`.tflite`，也是 FlatBuffers） | 不是算子库，也不是 TinyML 的同义词 |
+| **esp_nn** | Espressif 的 int8 算子库（卷积/池化等优化 kernel），TFLM 在 ESP32 上的加速后端 | 不是运行时，不解析模型 |
+| **esp-dl** | Espressif 的另一套运行时 + 格式（`.espdl`）+ 模型库 | 不依赖 esp_nn，走自己的 SIMD/ISA |
+
+**两条路线对比**
+
+| 维度 | TFLite Micro + esp_nn | esp-dl + esp-ppq |
+|---|---|---|
+| 模型格式 | `.tflite`（FlatBuffers） | `.espdl`（FlatBuffers） |
+| 量化工具 | TFLite Converter | esp-ppq（KL/percentile、TQT、AutoQuant） |
+| 运行时 | TFLM 解释器 | esp-dl execution plan |
+| 算子 | esp_nn kernel + TFLM 参考实现 | esp-dl Module + P4 SIMD |
+| 模型来源 | TFLite 生态（大量现成模型） | ESP-DL Model Zoo |
+| 芯片支持 | ESP32 系列（各芯片优化程度不同） | S3 / S31 / P4 |
+| 优势 | 生态大、跨平台 | 量化工具链深度集成、检测后处理现成、P4 优化好 |
+| 劣势 | ESP32 上算子/性能依赖 esp_nn | 生态窄、自定义算子需自写 Module（见第 6 章） |
+
+**和其他框架的定位**
+
+| 框架 | 定位 |
+|---|---|
+| TFLite Micro / CMSIS-NN | Arm MCU 的 TinyML 运行时/算子库 |
+| microTVM | MCU 上的 TVM 运行时 |
+| NCNN / TFLite（完整版） | 手机/PC 端，**不属于** TinyML |
+| esp-dl + esp-ppq | Espressif 全栈：量化 → `.espdl` → 板端 runtime |
+
+**esp-dl 算不算 TinyML？**
+
+算，但 ESP32-P4 处在 TinyML 的**上沿**：经典 TinyML（Cortex-M）是 KB 级 RAM、亚毫瓦、几十 KB 模型；P4 是 360 MHz 双核 + 可选几十 MB PSRAM、百毫瓦级，能跑几 MB 的 YOLO（代价是秒级推理）。所以更准确的说法是 **MCU 端 AI / 边缘 AI**，而 TinyML 的技术栈（量化、算子优化、静态内存规划）在这里完全适用。
+
+路线选择：
+
+- 想直接跑现成的 TFLite 模型、看重跨平台 → **TFLM + esp_nn**
+- 做人脸/检测、想用 esp-ppq 调量化、吃 P4 的 SIMD → **esp-dl**
+
 ---
 
 ## 2. 模型的基本组成与 esp-dl 的差异（初学者）
