@@ -13,11 +13,12 @@
 - [3. 从模型到芯片的完整流程](#3-从模型到芯片的完整流程)
 - [4. 模型量化（esp-ppq）](#4-模型量化esp-ppq)
 - [5. C++ 端使用 esp-dl](#5-c-端使用-esp-dl)
-- [6. 实战踩坑（重点）](#6-实战踩坑重点)
-- [7. ESP32-P4 平台配置](#7-esp32-p4-平台配置)
-- [8. esp-who 框架速览](#8-esp-who-框架速览)
-- [9. 速查命令](#9-速查命令)
-- [10. 参考](#10-参考)
+- [6. 扩展 esp-dl：自定义算子（Module）](#6-扩展-esp-dl自定义算子module)
+- [7. 实战踩坑（重点）](#7-实战踩坑重点)
+- [8. ESP32-P4 平台配置](#8-esp32-p4-平台配置)
+- [9. esp-who 框架速览](#9-esp-who-框架速览)
+- [10. 速查命令](#10-速查命令)
+- [11. 参考](#11-参考)
 
 ---
 
@@ -195,7 +196,7 @@ FlatBuffers 只是"允许"零拷贝，**最终是否真的零拷贝取决于配�
 
 - **"模型多大"和"运行占多少内存"是两回事**：权重可以放 flash/PSRAM；运行时还要分配激活/中间张量，这部分往往比权重还大（检测模型尤其明显）。
 - **推理速度不等于参数量**：yolov8n 参数量不大，但 640×640 的计算量（约 8.7 GFLOPs）才是耗时的原因。
-- **量化不是"压缩文件"那么简单**：它改变数值精度，有些算子对量化很敏感（分数、小数值），处理不好会掉点（见 6.1 节）。
+- **量化不是"压缩文件"那么简单**：它改变数值精度，有些算子对量化很敏感（分数、小数值），处理不好会掉点（见 7.1 节）。
 - **`model_input` 的 buffer 会被复用**：不要把输入/输出张量的指针长期保存，用完立即取值或拷走。
 - **模型文件不能跨芯片通用**：量化时 `target` 不同，量化规则/算子实现都不同，S3 的 `.espdl` 不能丢给 P4 跑。
 
@@ -366,7 +367,7 @@ PTQ（默认 kl/percentile）
 
 所有训练类 setting 都支持 `interested_layers`（只训练指定层，省时间也避免把好的层训练坏）。
 
-> ⚠️ 如果问题是"分数被 Concat 共用量化 scale 压成 0"（6.1 节），换任何量化方法都没用——先做 ONNX 图手术。
+> ⚠️ 如果问题是"分数被 Concat 共用量化 scale 压成 0"（7.1 节），换任何量化方法都没用——先做 ONNX 图手术。
 
 ### 4.8 自动量化：AutoQuant 与 espdl-quantize Skill
 
@@ -438,7 +439,7 @@ pip install -r ~/.claude/skills/espdl-quantize/assets/extra_requirements.txt
 
 装好后在 Claude Code 会话里直接说"用 espdl-quantize skill 调一下某个模型"，或输入 `/espdl-quantize`。注意 harness 必须用装了 `esp_ppq` 的解释器运行。
 
-> skill 只能调量化参数，修不了图结构问题（如 6.1 节的 Concat 共 scale）。
+> skill 只能调量化参数，修不了图结构问题（如 7.1 节的 Concat 共 scale）。
 
 ---
 
@@ -497,9 +498,128 @@ dl::TensorBase *out = model.get_output("/model.22/Sigmoid_output_0");
 
 ---
 
-## 6. 实战踩坑（重点）
+## 6. 扩展 esp-dl：自定义算子（Module）
 
-### 6.1 朴素 YOLOv8 导出会让分数全归零
+esp-dl 的算子以 `dl::module::Module` 子类的形式存在。新增一个算子 =
+**C++ 侧实现 Module + 注册 + 量化侧支持 + 对齐验证**。
+
+> ⚠️ 官方文档「如何创建新模块（算子）」的示例接口是旧版：文档里写的是
+> `forward(std::vector<TensorBase*>&, ...)`，而当前 esp-dl 的基类是
+> `forward(ModelContext*, runtime_mode_t)`。照抄文档会编译失败，以下以本地源码为准。
+
+### 6.1 需要重写的接口
+
+| 方法 | 作用 |
+|---|---|
+| `get_output_shape()` | 由输入形状推输出形状 |
+| `forward(ModelContext*, runtime_mode_t)` | 高级接口：实际计算，张量从 `context->get_tensor(m_inputs_index[i])` 取 |
+| `forward_args(void*)` | 低级接口：按参数执行，可留空 |
+| `deserialize(fbs_model, node_name)` | 从 `.espdl` 的节点信息重建模块 |
+| `print()` | 调试输出 |
+
+### 6.2 最小骨架（与本地版本对齐）
+
+```cpp
+namespace dl {
+namespace module {
+
+class MyCustomModule : public Module {
+public:
+    MyCustomModule(const char *name = "MyCustomModule",
+                   module_inplace_t inplace = MODULE_NON_INPLACE,
+                   quant_type_t quant_type = QUANT_TYPE_NONE)
+        : Module(name, inplace, quant_type) {}
+
+    std::vector<std::vector<int>> get_output_shape(std::vector<std::vector<int>> &input_shapes) override
+    {
+        return {input_shapes[0]};      // 按算子语义计算
+    }
+
+    void forward(ModelContext *context, runtime_mode_t mode) override
+    {
+        TensorBase *input  = context->get_tensor(m_inputs_index[0]);
+        TensorBase *output = context->get_tensor(m_outputs_index[0]);
+        if (quant_type == QUANT_TYPE_SYMM_8BIT) {
+            // int8 实现（部署必需）
+        } else if (quant_type == QUANT_TYPE_FLOAT32) {
+            float *in  = (float *)input->get_element_ptr();
+            float *out = (float *)output->get_element_ptr();
+            // ...
+        }
+    }
+
+    static Module *deserialize(fbs::FbsModel *fbs_model, std::string node_name)
+    {
+        quant_type_t q;
+        fbs_model->get_operation_attribute(node_name, "quant_type", q);
+        return new MyCustomModule(node_name.c_str(), MODULE_NON_INPLACE, q);
+    }
+
+    void print() override { ESP_LOGI("MyCustomModule", "%s", name.c_str()); }
+};
+
+} // namespace module
+} // namespace dl
+```
+
+### 6.3 注册
+
+在 `esp-dl/dl/module/include/dl_module_creator.hpp` 的 `register_dl_modules()` 里加一行：
+
+```cpp
+this->register_module("MyCustomModule", MyCustomModule::deserialize);
+```
+
+键名是 **ONNX op type 字符串**（现成的有 `"Conv"`、`"Add"`、`"Mul"`……），必须和 `.espdl`
+里记录的一致，否则 `ModuleCreator::create()` 找不到它，模型加载直接失败。
+
+### 6.4 五个容易踩的坑
+
+1. **`quant_type` 不是装饰**：真实模块在 `forward` 里按 `QUANT_TYPE_SYMM_8BIT` /
+   `QUANT_TYPE_SYMM_16BIT` / `QUANT_TYPE_FLOAT32` 分支实现（参考 `dl_module_relu.hpp`）。
+   只写 `QUANT_TYPE_NONE` 无法部署。
+2. **`inplace` 影响静态内存规划**：能原地计算的算子标 `MODULE_INPLACE_CHANGED_BUFFER`
+   可以省一块缓冲；标错会读到已被覆盖的数据。
+3. **属性名要和 PPQ 写的一致**：`deserialize` 里 `fbs_model->get_operation_attribute(...)`
+   读的键（如 `quant_type`）必须与 esp-ppq 导出时写入的一致——这就是文档说的"接口应与 ONNX 对齐"。
+4. **量化侧也要"认识"这个算子**：`.espdl` 是 esp-ppq 从 ONNX 图导出的；C++ 侧新增的算子
+   如果在 ONNX/PPQ 里没有对应表示，量化时根本不会生成它。
+5. **多核**：`forward` 会收到 `runtime_mode_t`，大算子可以用 `module_forward_dual_core`
+   拆分（参考 `dl_module_conv.hpp`）。
+
+### 6.5 验证
+
+- `model->test()`：用 `export_test_values=True` 导出的测试向量在板端对拍（容差读模型
+  metadata `test_max_error`，默认 5e-4）；
+- `profile(true)`：按层打印耗时/内存；
+- 可以对照 esp-dl 自带模块（`dl/module/include/`，例如 `dl_module_relu.hpp`）的写法。
+
+### 6.6 espdl-operator Skill（AI Agent 辅助）
+
+`esp-dl/tools/agents/skills/espdl-operator/` 提供算子开发的完整流程指导：
+
+| 文件 | 内容 |
+|---|---|
+| `SKILL.md` | 研究 → 实现（C++ / C 参考核 / SIMD）→ 量化支持（esp-ppq）→ 测试 → 优化 → 文档 |
+| `references/esp-dl-templates.md` | Module 模板 |
+| `references/esp-ppq-checklist.md` | 量化侧支持清单 |
+| `assets/docker/` | 构建/测试用 Docker 镜像（基于 `espressif/idf:v5.4.3`） |
+
+接入 Claude Code（与 espdl-quantize 相同）：
+
+```bash
+cp -r esp-dl/tools/agents/skills/espdl-operator ~/.claude/skills/espdl-operator
+```
+
+> 注意：该 skill 的测试阶段（Phase 6）依赖 **Docker**（镜像 `espdl/idf-ppq:latest`，
+> 首次构建约 20~30 分钟）。没装 Docker 时，实现/量化阶段仍可用，测试需要改用本地
+> ESP-IDF 工具链。
+
+---
+
+## 7. 实战踩坑（重点）
+
+### 7.1 朴素 YOLOv8 导出会让分数全归零
 
 **症状**：检测框能出来，但 score 全是 0（或全部低于阈值）。
 
@@ -509,7 +629,7 @@ dl::TensorBase *out = model.get_output("/model.22/Sigmoid_output_0");
 
 **经验**：量化前先看 `.info` 里各输出的 `exponent`/scale。如果某个张量的可表示范围明显小于它需要的范围（例如 score 只能表示到 0.248），就是 scale 被别的张量拖累了。
 
-### 6.2 P4 没有 NPU：耗时估算与输入尺寸
+### 7.2 P4 没有 NPU：耗时估算与输入尺寸
 
 ESP32-P4 实测（yolov8n，int8）：
 
@@ -530,7 +650,7 @@ detect: post:  22~46 ms   ← 后处理
 
 **耗时几乎全在推理**，预处理/后处理可以忽略。缩小输入是唯一有效的提速手段；换输入尺寸后记得改后处理器里的 `num_anchors`（8400 / 4725 / 3024 / 2100）。
 
-### 6.3 `cam_fb_peek()` 的 use-after-free（esp-who）
+### 7.3 `cam_fb_peek()` 的 use-after-free（esp-who）
 
 **崩溃指纹**：
 
@@ -546,7 +666,7 @@ MTVAL ≈ 0x4FFC0000            ← 内部 SRAM 的最高地址
 
 > 识别例子 `WhoRecognitionAppLCD` 给 `WhoFrameLCDDisp` 传 `peek_index = 1` 是对同一问题的部分规避（index 0 是最先被删的那一帧），不是设计意图。
 
-### 6.4 慢模型 + Yield2Idle：一个框都画不出来
+### 7.4 慢模型 + Yield2Idle：一个框都画不出来
 
 `WhoDetectAppLCD` + 秒级推理的模型会出现"**画面正常但永远没有框**"，换快模型（~0.1 s）就正常——**快推理把下面两个坑掩盖了**：
 
@@ -555,7 +675,7 @@ MTVAL ≈ 0x4FFC0000            ← 内部 SRAM 的最高地址
 2. **暂停时的 `cleanup()` 会清掉结果**。`cleanup_for_paused()` → `WhoDetect::cleanup()` → `WhoDetectResultLCDDisp::cleanup()` 清 `m_results` + `m_result`。而检测任务的暂停应答**恰好发生在推理结束、结果刚存进来的那一刻** → 结果在显示任务看到之前就被清掉（实测 `save: items=1` 之后 44 ms 的 draw 就是 `queue=0 items=0`）。
    **改法**：暂停时什么都不清，只在真正 stop 时清。
 
-### 6.5 显示与检测的时间戳对齐
+### 7.5 显示与检测的时间戳对齐
 
 `WhoDetectResultLCDDisp::lcd_disp_cb()` 只画"时间戳不晚于当前显示帧"的结果：
 
@@ -565,7 +685,7 @@ if (displayed_fb.timestamp >= result.timestamp) { 显示 } else { 等待 }
 
 上游的设计是**让显示端看 ringbuf 里较旧的一帧**（识别例子 `peek_index = 1`），使"画面"和"检测结果对应的帧"对齐。这个把戏只在推理延迟 < 显示延迟（≈ 一两帧）时成立；推理几秒的模型，框必然落后画面几秒——**唯一解是加快推理**（缩小输入/换小模型）。
 
-### 6.6 分数标注：字段有，但上游不填
+### 7.6 分数标注：字段有，但上游不填
 
 `draw_item_t` 有 `label` 字段，`draw_items_on_canvas()` 也会渲染它，但上游的 `save_detect_result()` 从来不赋值 → 框上一直没有文字。自己填：
 
@@ -577,7 +697,7 @@ item.label = label;
 
 注意框坐标可能是**负的**（模型常给出 `[102,-6,1024,403]`），标签起点要夹进画布，否则文字画到屏幕外。
 
-### 6.7 PPA 缩放的 1/16 量化规则
+### 7.7 PPA 缩放的 1/16 量化规则
 
 esp-dl 的 `resize_ppa()` 把缩放比存成 `int + frac/16`，实际写出的尺寸是
 `in.block_w * scale_int + in.block_w * scale_frac / 16`，不足的部分留右/下黑边。
@@ -592,13 +712,13 @@ esp-dl 的 `resize_ppa()` 把缩放比存成 `int + frac/16`，实际写出的�
 
 换成 640×375（scale 1.6 → 1.5625）就会留 24 列 × 15 行黑边。
 
-### 6.8 USB UVC 摄像头的坑（esp-who）
+### 7.8 USB UVC 摄像头的坑（esp-who）
 
 1. **`usb_host_uvc` 2.4.2 会把 `urb_size` 压到摄像头的 `dwMaxPayloadTransferSize`**（`uvc_host.c:838`），配置的 10240 会塌成 3072 = 一个 ISOC 包 → 满屏 `frame error` / `missed EoF`。该 clamp 在 **2.5.0** 移除。BSP 5.2.3 的依赖链锁在 `esp_video 2.0.1` → `usb_host_uvc 2.4.*`，只能本地 patch `managed_components`（重新解析依赖会丢）。
 2. **`VideoCapture` 没有设置 `VIDIOC_S_DQBUF_TIMEOUT`**，继承 esp_video 的 `portMAX_DELAY`：UVC 真卡住时 `DQBUF` 会永久阻塞，画面冻结。可以自己设 1 s 超时。
 3. 残留的 `usb err 1` / `missed EoF`（~0.3/s）与供电、温度无关，属正常范围。
 
-### 6.9 Phantom Kconfig symbol
+### 7.9 Phantom Kconfig symbol
 
 IDF 5.5.3 + 组件管理器：依赖规则引用了**本地没有任何组件定义的 Kconfig 符号**时，`prepare.py` 会直接退出（`Missing required kconfig option after retry`）。
 
@@ -612,7 +732,7 @@ config ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION
 
 无提示的隐藏符号在值为 `n` 时会被 kconfiglib 省略，组件管理器读不到，等于没定义。
 
-### 6.10 依赖版本要钉住
+### 7.10 依赖版本要钉住
 
 组件管理器会把 `~` 版本浮动到最新。实测踩过：
 
@@ -624,9 +744,9 @@ config ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION
 
 ---
 
-## 7. ESP32-P4 平台配置
+## 8. ESP32-P4 平台配置
 
-### 7.1 芯片版本（v1.3）
+### 8.1 芯片版本（v1.3）
 
 IDF 5.5 对 esp32p4 的默认最低芯片版本是 v3.0，v1.3 的板子必须在 `sdkconfig.defaults` 里放开：
 
@@ -637,16 +757,16 @@ CONFIG_ESP32P4_REV_MIN_0=y
 
 不写会报 `Target doesn't support chip revision`。代价：**flash 频率被压到 40 MHz**（烧录命令行里能看到 `--flash_freq 40m`）。
 
-### 7.2 Flash 与启动布局
+### 8.2 Flash 与启动布局
 
 - 板载 16 MB，`CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`
 - P4 的烧录偏移：bootloader `0x2000`、分区表 `0x8000`、app `0x10000`（与 S3 的 `0x0/0x8000/0x10000` 不同）
 
-### 7.3 控制台
+### 8.3 控制台
 
 ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART_DEFAULT` + `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG`）。`/dev/ttyACM0` 能直接看到日志。
 
-### 7.4 ESP32-S3 → ESP32-P4 迁移清单
+### 8.4 ESP32-S3 → ESP32-P4 迁移清单
 
 1. `idf.py set-target esp32p4`（旧的 `build/` 最好先删；半截目录 `fullclean` 会拒绝清理）
 2. **SPI 主机名兼容**：P4 有三个 SPI 外设，`SPI1_HOST=0 / SPI2_HOST=1 / SPI3_HOST=2`，S3 代码里的 `SPI2_HOST` 可以直接用
@@ -657,9 +777,9 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 
 ---
 
-## 8. esp-who 框架速览
+## 9. esp-who 框架速览
 
-### 8.1 数据管线
+### 9.1 数据管线
 
 ```
 摄像头 (MIPI-CSI 或 USB-UVC)
@@ -671,7 +791,7 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
             └→ WhoDetectResultLCDDisp：把框画进 canvas 的 layer
 ```
 
-### 8.2 关键类
+### 9.2 关键类
 
 | 类 | 作用 |
 |---|---|
@@ -680,9 +800,9 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 | `WhoDetectAppBase` / `WhoDetectAppLCD` | 组装采集+检测+显示+画框 |
 | `WhoFrameLCDDisp` | 把 fb 设为 LVGL canvas 缓冲并刷新（可选 `peek_index`） |
 | `WhoDetectResultLCDDisp` | 保存检测结果，在 `lcd_disp_cb` 里画框/文字 |
-| `WhoYield2Idle` | 定期暂停任务让 CPU 进 idle（**慢模型下是坑的来源**，见 6.4） |
+| `WhoYield2Idle` | 定期暂停任务让 CPU 进 idle（**慢模型下是坑的来源**，见 7.4） |
 
-### 8.3 线程与核心
+### 9.3 线程与核心
 
 - 帧管线节点、LCD 显示任务：核心 0，优先级 2
 - 检测任务：核心 1，优先级 2
@@ -690,7 +810,7 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
 
 ---
 
-## 9. 速查命令
+## 10. 速查命令
 
 ```bash
 # 编译 / 烧录 / 监视
@@ -712,7 +832,7 @@ python quantize_onnx_model.py     # 或 quantize_torch_model.py
 
 ---
 
-## 10. 参考
+## 11. 参考
 
 - esp-dl 仓库：<https://github.com/espressif/esp-dl>
 - esp-ppq（量化工具）：<https://github.com/espressif/esp-ppq>
