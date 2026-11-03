@@ -312,6 +312,134 @@ executor = TorchExecutor(graph=quant_ppq_graph, device="cpu")
 y_quant = executor(batch_x)[0]
 ```
 
+### 4.7 量化方法全景：PTQ 之外还有什么
+
+先把术语理清：**PTQ（post-training quantization）是"只用校准数据定 scale"的一类基线方法**；TQT、LSQ 等是在 PTQ 之上再做"局部训练"的**优化 pass**，它们不是互斥的"模式"，可以叠加。
+
+**① 数值方案（`quant_type`，4 种 + 1 个调试档）**
+
+| 方案 | 权重 | 激活 | 平台枚举（P4 = v2） | 说明 |
+|---|---|---|---|---|
+| `w8a8` | int8 | int8 | `ESPDL_INT8` | 默认，最小最快 |
+| `w8a16` | int8 | 16 bit | `ESPDL_W8A16` | 8 位激活掉点时优先试 |
+| `w16a16` | 16 bit | 16 bit | `ESPDL_INT16` | 精度最高，最慢最占内存 |
+| `none` | FP32 | FP32 | — | 只做导出/对照基线 |
+| `w16a16` + `debug=True` | — | — | `ESPDL_H_PRE_INT16` | 仅 PC 端高精度模拟，用于判断掉点来源，不部署 |
+
+> 旧的 `num_of_bits=8/16` 参数仍可用，但已被 `quant_type` 取代。
+
+**② 校准算法（`calib_algorithm`）**
+
+| 算法 | 原理 | 默认用在哪 |
+|---|---|---|
+| `kl` | 直方图 + KL 散度最小化，裁掉长尾 | **int8 激活**（`espdl_setting()` 默认） |
+| `percentile` | 按分位数裁剪（默认 **0.9999**） | **int8 权重** |
+| `minmax` | 最小/最大值 | **int16** 权重和激活 |
+| `mse` | 直方图上最小化量化误差 | 手动选 |
+| `isotone` / `constant` / `floating` | 保序 / 常数 / 直接 MSE | 特殊场景，esp-dl 部署基本不用 |
+
+支持按层覆盖：`calib_algorithm_per_layer = {"某层": "minmax"}`；权重和激活可分别设置。
+
+**③ 训练类优化 pass（全部默认关闭，可按需叠加）**
+
+| 方法 | 训练/优化什么 | 数据 | 开关 | 适用场景 |
+|---|---|---|---|---|
+| **TQT** | 每层裁剪阈值（MSE 目标） | 校准集 | `setting.tqt_optimization` | PTQ 掉点 1~2% 时首选，性价比最高 |
+| **LSQ** | 直接训练 step size/scale（STE） | 校准集 | `setting.lsq_optimization` | TQT 不够时；注意 **P4 是 2 的幂量化，LSQ 与约束冲突**，官方建议改用 TQT |
+| **AdaRound 类** | 训练权重的取整方向 | 校准集 | 无 setting 快捷开关，需手动加 pass | 权重舍入误差敏感的小模型 |
+| **BiasCorrection** | 修正量化后的 bias 偏差 | 校准集 | `setting.bias_correct` | bias 敏感网络 |
+| **BlockwiseReconstruction** | 按 block 重建，压逐块输出误差 | 校准集 | `setting.blockwise_reconstruction` | 深层网络误差累积 |
+| **Equalization** | 等价变换重分配权重/激活范围 | 校准集 | `equalization_setting` | 通道间动态范围差异大 |
+| **完整 QAT** | 权重 + 假量化端到端训练 | **有标签训练集** | `esp_ppq.qat`（无 `.espdl` 导出路径） | esp-dl 链路基本用不上 |
+
+> 另有 `lut_optimization`（默认开）——用查表实现激活函数，属于实现层加速，不改变精度。
+
+**④ 推荐尝试顺序**
+
+```
+PTQ（默认 kl/percentile）
+  → TQT
+  → LSQ / BlockwiseReconstruction
+  → BiasCorrection / Equalization
+  → 混合精度（w8a16 或个别层 16 bit）
+```
+
+所有训练类 setting 都支持 `interested_layers`（只训练指定层，省时间也避免把好的层训练坏）。
+
+> ⚠️ 如果问题是"分数被 Concat 共用量化 scale 压成 0"（6.1 节），换任何量化方法都没用——先做 ONNX 图手术。
+
+### 4.8 自动量化：AutoQuant 与 espdl-quantize Skill
+
+两者**不是两种量化算法**，而是同一套 esp-ppq passes 的两种"搜索驱动器"。
+
+**方式一：AutoQuant（`espdl_auto_quantize_onnx`）**
+
+纯 Python API，在预设搜索空间里枚举/筛选配置：
+
+```python
+from esp_ppq.api import AutoQuantSearchSetting, espdl_auto_quantize_onnx
+
+setting = AutoQuantSearchSetting(
+    search_mode="fast",          # exhaustive=枚举全部；fast=先筛一轮再细化
+    num_of_candidates=5,         # 最终保留 Top-K
+    score_direction="maximize",  # 不传 evaluate_fn 时用 "minimize"
+    run_dir="outputs/auto_quant",
+)
+espdl_auto_quantize_onnx(..., evaluate_fn=evaluate_fn, setting=setting)
+```
+
+- **评分**：给 `evaluate_fn`（返回 `(score, extras)`，如 top1/mAP）就按它排；不给则用默认的 **graphwise SNR 误差**（最差 3 层平均），此时方向应设 `minimize`。
+- **fast 模式**可调 `top_strategy=10`、`early_stop_patience=3`，避免组合爆炸；`strategy_space`/`param_space` 可自定义搜索范围。
+- **产出**：`run_dir/` 下 `summary.json`、`candidates.json`，以及 `0000/`、`0001/` 每轮实验的配置和模型文件。
+- **仅 ONNX 入口**，确定性、可进 CI。
+
+**方式二：espdl-quantize Skill**
+
+一个给 AI Agent 用的 skill（路径 `esp-dl/tools/agents/skills/espdl-quantize/`），靠"读误差分布 → 选方法 → 再跑一轮"在线迭代：
+
+- 你提供契约 `user_quant.py`：`QUANT_CONFIG`（模型类型/输入形状/目标芯片/primary_metric）、`create_calib_dataloader()`、`get_torch_model()` 或 `onnx_path`、`evaluate(quant_graph)`（以及可选的 `evaluate_fast()`）。
+- Agent 自动跑：**Phase 0** baseline → **Phase 1** 读 layerwise 误差/分布找 Top-K 最差层 → **Phase 2** 按决策手册选方法生成 setting → **Phase 3** 执行一轮 → **Phase 4** 比较与收敛判断，循环。
+- 内置知识库（`references/ppq_methods.md`）、决策手册（`decision_playbook.md`）、固定 harness（`scripts/run_iteration.py`）和状态机（`compare_iterations.py`）。
+- **目标感知安全网**：P4/S3/C 是 2 的幂量化，skill 会**自动跳过 LSQ**（改用直接训练 `log2_scale` 的 TQT）；P4 上启用逐层均衡时给出警告。
+- **产出**：每轮 `outputs/iter_N/`（metrics / layerwise_error / setting / 模型），最终 `outputs/final_report.md` + `outputs/best/model.espdl`；支持"再迭代 N 轮"续跑。
+- 依赖：pandas/scipy/tqdm；需要 Agent（Claude Code/Cursor/OpenCode 等），上下文越大越稳。
+
+**对比**
+
+| 维度 | AutoQuant | espdl-quantize Skill |
+|---|---|---|
+| 谁决策 | esp-ppq 搜索算法 | AI Agent + 决策手册/知识库 |
+| 搜索方式 | 预设空间枚举/启发式 | 每轮按层误差分布选方向迭代 |
+| 输入 | ONNX + 校准数据 + 搜索设置 | 契约文件 + 目标指标/轮数 |
+| 模型入口 | 仅 ONNX | Torch / ONNX |
+| 反馈信号 | evaluate_fn 或默认 SNR | layerwise 误差/分布 + 指标 + 报告 |
+| 运行环境 | 纯 Python，可批处理/CI | 需要 Agent，交互式 |
+| 成本 | exhaustive 可能组合爆炸 | 轮数可控，但每轮有 Agent 开销 |
+| 产出 | Top-K 候选 | 单一 best + 可读的 final_report |
+| 可复现性 | 高（确定性） | 中（依赖 Agent，但每轮 setting 落盘） |
+| 额外依赖 | 无 | pandas/scipy/tqdm |
+
+**怎么选**
+
+- 刚上手 / 批量模型 / 无 Agent 环境 → **AutoQuant**（先 `fast`）。
+- 掉点卡住，想知道"为什么、哪层最差、试过哪些方案" → **Skill**（报告和决策手册就是干这个的）。
+- 单个小模型、时间紧 → 手动 `espdl_quantize_onnx` + TQT 跑两轮通常就够，不必上自动搜索。
+
+**在 Claude Code 里接入 skill（本机实测）**
+
+```bash
+# 方式 1（需要 Node.js）：npx skills add espressif/esp-dl --skill espdl-quantize
+# 方式 2（无需 Node）：复制整个 skill 目录到 Agent 的 skills 目录
+cp -r esp-dl/tools/agents/skills/espdl-quantize ~/.claude/skills/espdl-quantize
+
+# 依赖装进【跑 harness 的那个 Python 环境】（esp_ppq 所在环境）
+pip install -r ~/.claude/skills/espdl-quantize/assets/extra_requirements.txt
+```
+
+装好后在 Claude Code 会话里直接说"用 espdl-quantize skill 调一下某个模型"，或输入 `/espdl-quantize`。注意 harness 必须用装了 `esp_ppq` 的解释器运行。
+
+> skill 只能调量化参数，修不了图结构问题（如 6.1 节的 Concat 共 scale）。
+
 ---
 
 ## 5. C++ 端使用 esp-dl
