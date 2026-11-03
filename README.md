@@ -47,7 +47,7 @@ Espressif 官方的端侧深度学习推理框架（C++），在 ESP32-S3 / ESP3
 
 ### esp-dl 在 TinyML / TFLite 生态中的位置
 
-TinyML 是**一个领域**（在资源受限 MCU 上跑模型），不是一个具体框架。ESP32 上有两条常见实现路线：
+**TinyML = Tiny Machine Learning（微型机器学习）**，指在微控制器和超低功耗设备上直接跑机器学习推理。它是一个**领域**，不是一个具体框架。ESP32 上有两条常见实现路线：
 
 ```
 TinyML（领域）
@@ -58,7 +58,7 @@ TinyML（领域）
 | 名称 | 是什么 | 不是什么 |
 |---|---|---|
 | **TinyML** | 领域：资源受限 MCU 上的本地推理 | 不是某个具体框架 |
-| **TFLite Micro (TFLM)** | 运行时 + 模型格式（`.tflite`，也是 FlatBuffers） | 不是算子库，也不是 TinyML 的同义词 |
+| **TFLite Micro (TFLM)** | 运行时 + 模型格式（`.tflite`，也是 FlatBuffers）；全称 TensorFlow Lite for Microcontrollers | 不是算子库，也不是 TinyML 的同义词 |
 | **esp_nn** | Espressif 的 int8 算子库（卷积/池化等优化 kernel），TFLM 在 ESP32 上的加速后端 | 不是运行时，不解析模型 |
 | **esp-dl** | Espressif 的另一套运行时 + 格式（`.espdl`）+ 模型库 | 不依赖 esp_nn，走自己的 SIMD/ISA |
 
