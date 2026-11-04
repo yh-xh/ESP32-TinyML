@@ -19,6 +19,8 @@
 - **[模型与部署基础（basics.md）](basics.md)** —— 模型 = 结构 + 参数、推理 vs 训练、张量与内存布局、常见模型文件格式、量化概念、FlatBuffers、初学常识校正。
 - **[神经网络基础（neural-networks.md）](neural-networks.md)** —— 神经元、激活函数、层与算子、全连接网络（MLP）、卷积神经网络（卷积核/通道/感受野）、RNN/LSTM/TCN，以及术语速查表。
 
+> 推荐顺序：**neural-networks.md**（网络结构）→ **basics.md**（量化与部署）→ 对应平台分支（实战）。
+
 两个分支的「第 2 章」都只保留平台特有内容，公共概念统一指回这里，避免同一份知识维护两遍。
 
 ## 快速开始
@@ -33,16 +35,13 @@ git checkout esp32-c5   # ESP32-C5 / esp-nn 笔记
 
 ## 两条路线怎么选
 
-| 维度 | esp-dl + esp-ppq（P4） | esp-nn + TFLM（C5） |
-|---|---|---|
-| 模型格式 | `.espdl` | `.tflite` |
-| 量化工具 | esp-ppq（KL/percentile、TQT、AutoQuant） | TFLite Converter |
-| 运行时 | esp-dl execution plan | TFLM 解释器 + esp-nn kernel |
-| 算子来源 | esp-dl 自己的 Module + P4 SIMD | esp_nn kernel + TFLM 参考实现 |
-| 适合场景 | 检测/识别、想深度调量化、吃 P4 的 SIMD | 通用 TFLite 生态、看重跨平台 |
-| 笔记入口 | [esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4) | [esp32-c5 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5) |
+完整的 8 维对比（模型格式、量化工具、运行时、算子来源、模型来源、芯片支持、优劣势）见
+**[basics.md · 两条实现路线](basics.md#8-两条实现路线)**。一句话结论：
 
-> 两条路线的关系（TinyML / TFLM / esp_nn / esp-dl 的层级）在 P4 笔记第 1 章和 C5 笔记第 1 章都有详细说明。
+- 想直接跑现成的 TFLite 模型、看重跨平台、上手快 → **esp-nn + TFLM（C5）**
+- 做人脸/检测、想用 esp-ppq 深度调量化、吃 P4 的 SIMD → **esp-dl + esp-ppq（P4）**
+
+> 两条路线与 TinyML 的层级关系，在各分支第 1 章也有平台视角的说明。
 
 ## 说明
 

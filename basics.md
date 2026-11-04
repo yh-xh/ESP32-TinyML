@@ -74,6 +74,8 @@
 - **数据类型**：训练用 `float32`；量化后用 `int8`（权重/激活）+ `int32`（bias 累加）。
 - **内存布局**：同一张图，`NCHW` 和 `NHWC` 在内存里的排法不同；做颜色转换、resize、
   `memcpy` 时必须和训练时一致。
+- **步长 stride**：一行占多少字节。`stride = 宽 × 每像素字节数`（有些硬件会对齐到 16/64 字节）。
+  访问第 y 行第 x 列 = `data + y×stride + x×bpp`；stride/布局不对，整幅数据都会错位。
 - **像素格式**也是一种布局：摄像头常输出 `RGB565`（2 字节/像素），训练常用 `RGB888`（3 字节）。
 
 两个实际例子：
@@ -112,6 +114,19 @@
   - esp-dl 用 **`scale = 2^exponent`**（2 的幂）表示，反量化可用移位/查表实现；
     `.info` 里看到的 `exponents: [-4]` 就是 `scale = 2^-4 = 0.0625`。
   - TFLite 全整数量化需要提供 `representative_dataset`，否则只能做动态范围量化或保持 float。
+
+**量化误差从哪来**
+
+| 来源 | 说明 | 缓解 |
+|---|---|---|
+| **舍入误差** | 每个数最多差 `scale/2`；scale 越小误差越小，但可表示范围也越小 | 用 per-channel、16 bit |
+| **截断误差** | 超出 `scale×127` 的激活被截在边界上 | KL / percentile 校准，裁掉长尾 |
+| **per-channel** | 权重按输出通道分别定 scale（`scale_c = max|w_c| / 127`） | 避免一个通道的极值拖累其他通道 |
+| **累加精度** | int8×int8 用 **int32 累加**，防止溢出 | 框架自动处理；注意大模型累加和 |
+| **2 的幂 scale** | esp-dl 用 `2^exponent` 省乘法，但 scale 只能取离散值 | 精度略低于任意 scale，换来更快的反量化 |
+
+> 记住一个直觉：**量化掉点通常不是"平均误差"造成的，而是少数离群值把 scale 撑大，
+> 导致正常数值只用到 int8 的一小部分**。这就是校准算法（KL/percentile）存在的意义。
 
 ## 6. FlatBuffers：文件格式也是内存布局
 
@@ -169,3 +184,17 @@
 | 笔记 | [esp32-c5 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5) | [esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4) |
 
 > 两条路线的层级关系（TinyML / TFLM / esp_nn / esp-dl）在各分支第 1 章有更详细的说明。
+
+---
+
+## 相关文档
+
+- **[neural-networks.md · 神经网络基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/neural-networks.md)** ——
+  神经元、激活函数、MLP/CNN/TCN（先建立网络结构的直觉）。
+- **[esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4)** ——
+  esp-dl + esp-ppq：量化调优、C++ 部署、自定义算子、esp-who。
+- **[esp32-c5 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5)** ——
+  esp-nn + TFLite Micro：手势识别实战、软浮点、arena。
+- 回到 [仓库首页](https://github.com/yh-xh/ESP32-TinyML)。
+
+> 建议顺序：neural-networks.md（网络结构）→ 本文（量化与部署）→ 对应平台分支（实战）。
