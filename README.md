@@ -2,7 +2,7 @@
 
 > **适用环境**：ESP-IDF v5.5.2 · esp-tflite-micro 1.3.4 · esp-nn 1.2.5 · ESP32-C5 · Sensairshuttle `gesture_recognition`
 > **记录时间**：2026-11
-> 内容以实测和源码为准，版本更新后部分 API 可能变化；配套 esp-dl 笔记见 [esp32-p4-notes](https://github.com/yh-xh/esp32-p4-notes)。
+> 内容以实测和源码为准，版本更新后部分 API 可能变化；配套 esp-dl 笔记见 [esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4)。
 
 ---
 
