@@ -823,6 +823,130 @@ ESP32-P4 默认 **UART0 + USB-Serial-JTAG 双输出**（`CONFIG_ESP_CONSOLE_UART
    **头文件里暴露了 `gpio_num_t` / `spi_host_device_t` 时，依赖必须是公开的 `REQUIRES`**（`PRIV_REQUIRES` 只在组件内部可见，main 会找不到头文件）
 5. 如果板子有 BSP，把版本相关的 sdkconfig 写进 BSP 的默认配置文件，而不是手改 `sdkconfig`
 
+### 8.5 ESP32-P4 规格与版本
+
+| 项目 | 规格 | 说明 |
+|---|---|---|
+| CPU | 双核 32-bit RISC-V（RV32IMAFC + Zicsr/Zifencei） | 最高 **400 MHz**，本板默认 360 MHz |
+| 低功耗核 | LP 核（RISC-V） | 支持 LP ADC / LP VAD，睡眠下可采样 |
+| 浮点 | 单精度 FPU（F 扩展） | 热点推理路径基本不用浮点 |
+| SIMD | **PIE（Processor Instruction Extensions）128-bit** | int8/int16 向量乘加，见 8.6 |
+| 内部 SRAM | 768 KB（地址 `0x4FF00000`~`0x4FFC0000`） | 放激活/中间张量 |
+| PSRAM | 本板封装内 **32 MB** | 启动日志 `hex_psram` 识别为 256 Mbit |
+| Flash | 板载 16 MB | 权重可放这里 |
+| NPU | **无** | 推理全靠 CPU + SIMD |
+| 媒体加速 | JPEG 编解码、ISP、PPA（2D 缩放/裁剪/旋转）、MIPI-CSI/DSI、USB 2.0 HS | 把非 NN 的工作从 CPU 卸载掉 |
+| 无线 | **无 Wi-Fi/BT** | 与 S3 的重要区别；需要无线时外挂（如 ESP32-C6） |
+
+**关于"版本"（芯片修订 revision）**
+
+- P4 有多个芯片修订：早期 v0.x、v1.x，以及 v3.0 之后。
+- **IDF 5.5 对 esp32p4 默认最低版本是 v3.0**；v1.3 的板子必须在 `sdkconfig.defaults` 里放开：
+
+```kconfig
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_0=y
+```
+
+- 不写会在构建/启动时报 `Target doesn't support chip revision`；代价是 **flash 频率被压到 40 MHz**（配置详情见 8.1、8.2）。
+- 型号上还有"带/不带封装内 PSRAM"的区别：本板是封装内 32 MB PSRAM（`hex_psram`），不需要外挂 PSRAM 芯片。
+
+### 8.6 RISC-V 架构与 PIE SIMD
+
+**RISC-V 是什么**
+
+RISC-V 是一个**开放、免授权费**的指令集架构（ISA）。它的设计是"**小基础指令集 + 可选扩展**"：
+
+| 字母 | 含义 | 对端侧的意义 |
+|---|---|---|
+| `I` | 基础整数指令 | 必备 |
+| `M` | 乘除法 | 卷积/全连接需要 |
+| `A` | 原子指令 | 双核同步 |
+| `F` | 单精度浮点 | 少量浮点运算（预处理/后处理） |
+| `C` | 压缩指令（16-bit 编码） | **减小代码体积**（对 flash 宝贵） |
+| `Zicsr` / `Zifencei` | CSR / 指令缓存屏障 | 系统控制 |
+
+所以 ESP32-P4 的 `rv32imafc_zicsr_zifencei` 表示：**32 位 RISC-V + 整数/乘除/原子/单精度浮点/压缩指令**。
+
+**Espressif 的私有扩展**
+
+编译参数里还会看到两个自定义扩展：
+
+- **`xesploop`**：硬件循环（`esp.lp.setup`），减少循环分支开销；
+- **`xespv` / PIE**：**128-bit SIMD 向量扩展**。
+
+esp-dl 的 P4 卷积汇编里能直接看到它们（`dl/base/isa/esp32p4/*.S`）：
+
+```asm
+esp.ld.128.usar.ip   \input_front_aligned, \input_ptr, 16   # 一次读 128 bit
+esp.vld.128.ip       \filter_v0, \filter_ptr, 16
+esp.vsmulas.s8.qacc.ld.incp \filter_v0, \filter_ptr, \filter_v0, \input_v0, 0
+#    ^^^^^^^^^^^^^^ int8 向量乘加，累加到 qacc（q 寄存器 q0~q7）
+```
+
+**为什么 PIE 对推理关键**
+
+卷积/全连接的本质是大量乘加（MAC）。PIE 用 128-bit 寄存器做 int8 向量运算：
+
+- 一个 128-bit 寄存器装 **16 个 int8**；
+- 一条 `vsmulas.s8` 最多做 **16 路 int8 乘加**，而标量指令一次只做 1 路；
+- 360 MHz × 16 MAC/周期 ≈ **5.8 GMAC/s（约 11.5 GFLOP/s）理论峰值**；实际受访存、im2col、depthwise 效率影响，esp-dl 实测有效算力约 **1~1.5 GFLOP/s**。
+
+这就是"没有 NPU 也能跑模型"的硬件基础——**把标量运算换成 SIMD 向量运算**。同样的思路也出现在 Cortex-M 的 Helium/MVE + CMSIS-NN，以及 ESP32-S3 的 PIE 上。
+
+另外两个细节：
+
+- **双核**：两颗核可以拆分大卷积（`module_forward_dual_core`，见 4.7/6.4），理论再接近 ×2；
+- **FPU 存在但不用于热点**：F 扩展只用于预处理/后处理里的少量浮点，推理主循环是 int8 + int32 累加。
+
+### 8.7 为什么资源受限的单片机也能部署模型
+
+先把账算清楚（P4 实测/估算）：
+
+| 模型 | 计算量 | int8 权重 | 激活峰值 | P4 上耗时 |
+|---|---|---|---|---|
+| 经典 TinyML（关键词唤醒/手势） | ~1 MFLOPs | 几十 KB | 几十 KB | **ms 级** |
+| MobileNetV2 @224 | ~0.3 GMAC（约 0.6 GFLOPs） | ~3.5 MB | ~1~2 MB | 数百毫秒（量级估算） |
+| YOLOv8n @640 | ~8.7 GFLOPs | ~3 MB | 数 MB | **5~6.7 s（实测）** |
+
+结论：**单片机能跑模型，不是把 PC 模型原样塞进去，而是四件事同时做——模型变小、数值变窄、算子变快、内存变省。**
+
+**① 数值变窄：量化**
+
+- float32 → int8：权重体积 **1/4**，带宽 **1/4**，SIMD 一次处理的元素数 **4 倍**；
+- 累加用 int32，反量化用 `scale = 2^exponent`（移位实现），主循环里没有浮点；
+- 这是收益最大的一步，esp-dl 的全部模型都是量化后的（`.espdl`）。
+
+**② 模型变小：结构设计**
+
+- 深度可分离卷积（MobileNet 系）把标准卷积的计算量降一个数量级；
+- 输入分辨率从 640 降到 320，计算量直接降到 **1/4**；
+- 训练侧还可以用剪枝、蒸馏、NAS（这些在导出前做，**esp-dl 不做**）。
+
+**③ 算子变快：SIMD + 融合 + 查表**
+
+- PIE 128-bit 向量指令（8.6）；
+- 算子融合：Conv + Bias + 激活 合成一个 kernel，少读写一遍中间张量；
+- 激活函数用 **LUT（查表）** 实现（esp-dl 默认开启 `lut_optimization`），省掉指数/除法；
+- 双核拆分大卷积。
+
+**④ 内存变省：静态规划 + 分层复用**
+
+- **权重不驻留 SRAM**：放 flash（XIP/cache 映射）或 PSRAM，按需读；
+- **激活只保留"当前还活着"的张量**：内存规划器按张量生命周期贪心复用（greedy），所以峰值内存远小于"所有层加起来"；
+- **固定 batch=1、固定输入形状**：没有动态分配、没有多 batch 缓冲；
+- **inplace 算子**（如 ReLU）直接改写输入缓冲，再省一块；
+- 加上 FlatBuffers 的零拷贝加载（2.7），加载阶段也不复制整份模型。
+
+**⑤ 把非 NN 的活卸载给硬件**
+
+JPEG 解码、ISP 处理、PPA 缩放/裁剪、CSI/DSI DMA 都由专用外设完成，CPU 只负责模型计算。
+
+**一句话总结**
+
+> 单片机跑模型 = **int8 量化（4×）+ SIMD 向量化（~10×）+ 小模型结构 + 静态内存复用 + 硬件卸载**。
+> P4 靠这五件事达到了 1~1.5 GFLOP/s 的有效算力——跑 MobileNet 级模型是几百毫秒，跑 YOLOv8n@640 就是秒级（已到这套硬件的上沿）。
+
 ---
 
 ## 9. esp-who 框架速览
