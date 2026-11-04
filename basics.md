@@ -4,6 +4,9 @@
 > [ESP32-C5 / esp-nn 笔记](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5) 的**公共基础**：
 > 模型是什么、怎么量化、怎么装进 MCU。
 > 两份笔记的第 2 章都指向这里，平台特有的内容各自保留。
+>
+> 想先补神经网络本身（神经元、激活函数、CNN、TCN），看
+> [neural-networks.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/neural-networks.md)。
 
 ---
 
