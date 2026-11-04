@@ -12,6 +12,14 @@
 | **ESP32-P4** | esp-dl + esp-ppq（Espressif 自研运行时） | [esp32-p4](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4) | esp-dl 量化与部署、自定义算子、esp-who 框架、P4 平台规格与 RISC-V/PIE |
 | **ESP32-C5** | esp-nn + TFLite Micro（通用生态路线） | [esp32-c5](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5) | esp-nn/TFLM 运行时、手势识别实战、软浮点、性能与量化对比 |
 
+## 公共基础
+
+两份笔记共享的概念部分已抽离成一份，统一维护在主分支：
+
+**[模型与部署基础（basics.md）](basics.md)** —— 模型 = 结构 + 参数、推理 vs 训练、张量与内存布局、常见模型文件格式、量化概念、FlatBuffers、初学常识校正。
+
+两个分支的「第 2 章」都只保留平台特有内容，公共概念统一指回这里，避免同一份知识维护两遍。
+
 ## 快速开始
 
 ```bash
