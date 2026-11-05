@@ -17,6 +17,7 @@
 - [3. 张量与内存布局](#3-张量与内存布局)
 - [4. 常见模型文件格式](#4-常见模型文件格式)
 - [5. 量化概念](#5-量化概念)
+  - [5.1 PTQ 与 QAT：什么时候量化](#51-ptq-与-qat什么时候量化)
 - [6. FlatBuffers：文件格式也是内存布局](#6-flatbuffers文件格式也是内存布局)
 - [7. 给初学者的常识校正](#7-给初学者的常识校正)
 - [8. 两条实现路线](#8-两条实现路线)
@@ -127,6 +128,132 @@
 
 > 记住一个直觉：**量化掉点通常不是"平均误差"造成的，而是少数离群值把 scale 撑大，
 > 导致正常数值只用到 int8 的一小部分**。这就是校准算法（KL/percentile）存在的意义。
+
+### 5.1 PTQ 与 QAT：什么时候量化
+
+上面说的"跑一批数据校准 → 算 scale"属于 **PTQ（Post-Training Quantization，训练后量化）**。
+另一条路是 **QAT（Quantization-Aware Training，量化感知训练）**：**在训练过程中就模拟量化**。
+两者的区别不在算法，而在**量化插在训练流程的哪一步**。
+
+| | PTQ（训练后量化） | QAT（量化感知训练） |
+|---|---|---|
+| 量化时机 | 模型**训练完全结束**后，一次性量化 | 训练**过程中**就模拟量化误差 |
+| 需要的数据 | 几百张**无标注**校准图 | 完整**标注**训练集 |
+| 算力 | CPU 几分钟到几十分钟 | GPU 数小时～数天（示例只支持单卡） |
+| 需要调什么 | 校准算法（KLD/percentile）、量化配置 | 学习率、epoch、loss + 量化配置 |
+| 精度 | 通用场景够用；小模型/检测可能明显掉点 | 接近 float 模型 |
+| 落地成本 | 低，不需要能训练 | 高，得能重新训练模型 |
+
+**PTQ 为什么会掉点**
+
+PTQ 把权重量化一次就固定了，模型**没有机会适应**量化误差，误差还会在深层网络里逐层放大。典型重灾区：
+
+- **小模型**：每层冗余少，对误差容错差；
+- **检测/分割**：bbox 回归对数值误差非常敏感；
+- **激活动态范围大**：少数离群值把 scale 撑大，正常值只用到 int8 的一小部分。
+
+**QAT 的核心思想：训练时就"假装"已经量化了**
+
+在前向图里插入 **fake-quant（伪量化）** 节点：
+
+```
+x ──→ [ q = round(x/scale); x' = q·scale ] ──→ 后续层
+           ↑ 前向：真的舍入，模拟 int8 量化误差
+           ↑ 反向：round 不可导，用 STE 把梯度原样传回
+```
+
+- **前向**：数值真的被舍入到 int8 网格上，模型"感受"到量化误差；
+- **反向**：`round()` 的导数几乎处处为 0，没法反传，于是用 **STE（Straight-Through Estimator，直通估计）**
+  假装 `∂L/∂x ≈ ∂L/∂x'`，照常更新权重；
+- 训练几个 epoch 后，权重会自己挪到**对量化更友好**的位置（分布更集中、离群值更少）。
+
+所以 QAT 不是"另一种量化格式"，而是**让模型主动适应量化误差**。
+
+**在 ESP32 上分别怎么做**
+
+| 路线 | PTQ | QAT |
+|---|---|---|
+| **P4 / esp-dl + esp-ppq** | `espdl_quantize_torch` / `espdl_quantize_onnx`（observer 校准 + TQT/AdaRound） | esp-dl 示例 `how_to_quantize_model/quantize_yolo11n`、`quantize_yolo26`：`TrainableGraph` + `Trainer` |
+| **C5 / esp-nn + TFLM** | TFLite Converter + `representative_dataset` | TensorFlow Model Optimization Toolkit（TF-MOT）做 QAT，再 converter 导出 |
+
+> 补充：esp-dl 的 PTQ 属于**静态全整型**量化（校准后 scale 固定）；TFLite 还支持"动态范围量化"
+> （权重 int8、激活在推理时临时算 scale），但它要靠运行时反复反量化，MCU 上一般不用于追求速度的场景。
+
+> **QAT 全程在 PC/GPU 上完成，MCU 只跑最终的 int8 推理**——板上没有任何训练开销，
+> `.espdl` 的格式、体积、算子也和 PTQ 完全一样。
+
+**esp-ppq 的 QAT 流程（P4 示例里的真实步骤）**
+
+```
+float 训练 → 导出 ONNX
+   ↓
+挂量化配置 + 校准，得到初始 scale        ← 这一步和 PTQ 完全相同
+   ↓
+包成 TrainableGraph（前向 fake-quant，反向 STE）
+   ↓
+用带标签数据集继续训练（学习率很小，示例用 1e-6）
+   ↓
+每个 epoch 导出 .espdl（部署）+ .native（可续训的快照）
+```
+
+对应代码骨架（`Trainer` 是示例目录里 `trainer.py` 的封装，不是 esp-ppq 的 API）：
+
+```python
+import esp_ppq.lib as PFL
+from esp_ppq.api import get_target_platform, load_onnx_graph
+from esp_ppq.IR import TrainableGraph
+from esp_ppq.executor import TorchExecutor
+from trainer import Trainer                      # 示例自带：封装 epoch/step/save
+
+graph = load_onnx_graph(onnx_import_file="yolo11n.onnx")
+
+# 1) 和 PTQ 一样：量化配置 + 校准
+quantizer = PFL.Quantizer(platform=get_target_platform("esp32p4", "w8a8"), graph=graph)
+# ... dispatch / ParameterQuantizePass / RuntimeCalibrationPass ...
+
+# 2) 包成可训练图：前向走 fake-quant，反向走 STE
+trainable = TrainableGraph(graph)
+executor = TorchExecutor(graph=graph)
+trainer = Trainer(graph=graph)
+
+for epoch in range(EPOCH):
+    trainer.epoch(train_loader)                  # 内部用 executor.forward_with_gradient
+    trainer.save(f"epoch{epoch}.espdl", f"epoch{epoch}.native")
+
+# 3) 评估量化后精度，挑最好的 epoch 部署
+```
+
+两个产物别搞混：
+
+- **`.espdl`** —— 给 esp-dl 部署的最终量化模型；
+- **`.native`** —— 可训练的 PPQ 图快照，用于**断点续训**和**精度复核**，不是部署文件。
+
+**ESP32 特有的坑：QAT 的"仿真"必须和硬件一致**
+
+QAT 的价值建立在"训练时模拟的量化 = 板上真实执行的量化"之上。esp-ppq 为此做了两件事
+（也是它和上游 PPQ 的关键差异）：
+
+1. **2 的幂 scale**：esp-dl 的 scale 必须是 `2^exponent`，esp-ppq 的 `EspdlQuantizer` 在构建量化配置时
+   直接带上 `POWER_OF_2` 属性，QAT 的 fake-quant 和最终导出用的是**同一套配置**，
+   不会出现"训练用任意 scale、上板被改成 2 的幂"的错位；
+2. **LUT 激活逐位对齐**：SiLU/Sigmoid 在 esp-dl 里是**查表**实现，esp-ppq 注册了与硬件相同的
+   LUT 算子，训练时模拟的查表误差和板上一致。
+
+这也是为什么在 ESP 上做 QAT 必须用 **esp-ppq 的量化配置**：拿通用 PPQ 的 QAT 结果直接迁移，
+训练时优化的误差和板上实际执行的误差不是同一个，QAT 的收益会打折扣。
+
+**什么时候该上 QAT**
+
+经验顺序：
+
+1. 先做 **PTQ**，用真实数据评估**端到端指标**（不是只看某一层的余弦相似度）；
+2. 掉点可接受（分类 top-1 掉 <1%，检测 mAP 掉 <2~3 个点）→ 就停在 PTQ；
+3. 不达标 → 先榨干 PTQ 的"免费手段"：换校准算法（KLD/percentile）、per-channel 权重、
+   TQT / AdaRound、混合精度（w8a16）、AutoQuant；
+4. 还不行，且你有**标注数据 + GPU** → 再上 QAT。
+
+> 一句话：**PTQ 是默认选项，QAT 是最后的精度保底手段**。
+> QAT 的成本不在工具，而在"你能不能重新训练一个模型"。
 
 ## 6. FlatBuffers：文件格式也是内存布局
 
