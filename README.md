@@ -154,6 +154,10 @@ esp-dl 只支持 **batch = 1**，所有环节（导出、量化、推理）都�
 
 ## 4. 模型量化（esp-ppq）
 
+> 本章讲的是 **PTQ（训练后量化）**。QAT（量化感知训练）的原理、与 PTQ 的取舍、
+> 以及 ESP32 两条路线分别怎么支持，见
+> [basics.md · 5.1 PTQ 与 QAT](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#51-ptq-与-qat什么时候量化)。
+
 ### 4.1 两个入口
 
 `esp_ppq.api` 提供两个函数，量化后端完全相同，区别只在**图从哪来**：
