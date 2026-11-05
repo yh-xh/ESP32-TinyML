@@ -154,9 +154,9 @@ esp-dl 只支持 **batch = 1**，所有环节（导出、量化、推理）都�
 
 ## 4. 模型量化（esp-ppq）
 
-> 本章讲的是 **PTQ（训练后量化）**。QAT（量化感知训练）的原理、与 PTQ 的取舍、
-> 以及 ESP32 两条路线分别怎么支持，见
-> [basics.md · 5.1 PTQ 与 QAT](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#51-ptq-与-qat什么时候量化)。
+> 本章讲的是 **PTQ（训练后量化）**。精度不够时怎么用 **TQT（训练量化阈值）** 补救，
+> 原理、参数和实测效果见
+> [basics.md · 5.1 PTQ 与 TQT](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#51-ptq-与-tqt量化精度不够时怎么办)。
 
 ### 4.1 两个入口
 
@@ -290,7 +290,6 @@ y_quant = executor(batch_x)[0]
 | **BiasCorrection** | 修正量化后的 bias 偏差 | 校准集 | `setting.bias_correct` | bias 敏感网络 |
 | **BlockwiseReconstruction** | 按 block 重建，压逐块输出误差 | 校准集 | `setting.blockwise_reconstruction` | 深层网络误差累积 |
 | **Equalization** | 等价变换重分配权重/激活范围 | 校准集 | `equalization_setting` | 通道间动态范围差异大 |
-| **完整 QAT** | 权重 + 假量化端到端训练 | **有标签训练集** | `esp_ppq.qat`（无 `.espdl` 导出路径） | esp-dl 链路基本用不上 |
 
 > 另有 `lut_optimization`（默认开）——用查表实现激活函数，属于实现层加速，不改变精度。
 
