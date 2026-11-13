@@ -73,7 +73,7 @@ TinyML（领域）
 
 > 模型组成、推理 vs 训练、张量/布局、常见文件格式、量化概念、FlatBuffers、常识校正
 > 是两份笔记的公共基础，已抽离到主分支统一维护：
-> **[basics.md · 模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)**
+> **[model-deployment.md · 模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)**
 >
 > 本章只保留 TFLM / 本项目特有的内容。
 
