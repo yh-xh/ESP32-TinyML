@@ -100,7 +100,7 @@ TinyML（领域）
 
 > 模型组成、推理 vs 训练、张量/布局、常见文件格式、量化概念、FlatBuffers、常识校正
 > 是两份笔记的公共基础，已抽离到主分支统一维护：
-> **[basics.md · 模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)**
+> **[model-deployment.md · 模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)**
 >
 > 本章只保留 esp-dl 特有的内容。
 
@@ -156,7 +156,7 @@ esp-dl 只支持 **batch = 1**，所有环节（导出、量化、推理）都�
 
 > 本章讲的是 **PTQ（训练后量化）**。精度不够时怎么用 **TQT（训练量化阈值）** 补救，
 > 原理、参数和实测效果见
-> [basics.md · 5.1 PTQ 与 TQT](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#51-ptq-与-tqt量化精度不够时怎么办)。
+> [model-deployment.md · 5.1 PTQ 与 TQT](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#51-ptq-与-tqt量化精度不够时怎么办)。
 
 ### 4.1 两个入口
 
@@ -826,7 +826,7 @@ esp.vsmulas.s8.qacc.ld.incp \filter_v0, \filter_ptr, \filter_v0, \input_v0, 0
 - **激活只保留"当前还活着"的张量**：内存规划器按张量生命周期贪心复用（greedy），所以峰值内存远小于"所有层加起来"；
 - **固定 batch=1、固定输入形状**：没有动态分配、没有多 batch 缓冲；
 - **inplace 算子**（如 ReLU）直接改写输入缓冲，再省一块；
-- 加上 FlatBuffers 的零拷贝加载（见 [basics.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)），加载阶段也不复制整份模型。
+- 加上 FlatBuffers 的零拷贝加载（见 [model-deployment.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)），加载阶段也不复制整份模型。
 
 **⑤ 把非 NN 的活卸载给硬件**
 
