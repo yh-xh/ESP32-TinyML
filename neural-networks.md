@@ -3,7 +3,7 @@
 > 这篇文档以直觉和类比为主，只在 8.6 手算一次训练时用一点必要的数学——每一步都落在具体数字上。
 > 从感知机到深度学习的来路讲起，再分清几个常混用的词，然后逐个认识零件。
 > 这是 [ESP32-TinyML](https://github.com/yh-xh/ESP32-TinyML) 的公共基础篇之一；
-> 模型如何量化、装进 MCU 见 [basics.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)。
+> 模型如何量化、装进 MCU 见 [模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)。
 
 ---
 
@@ -127,7 +127,7 @@ Transformer 用"注意力"代替循环结构，能并行处理长序列，后来
 | 2019+ | TinyML / esp-dl | MCU 上跑模型 | 量化、静态内存、端侧运行时 |
 
 > 历史讲完，先把 AI / ML / DL 的关系分清。模型本身的定义、作用和"架构 vs 权重 vs 框架"，
-> 见 [basics.md · 模型基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#1-一个模型--结构--参数)。
+> 见 [模型与部署基础 · 模型基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#1-一个模型--结构--参数)。
 
 ## AI、机器学习与深度学习
 
@@ -174,7 +174,7 @@ Transformer 用"注意力"代替循环结构，能并行处理长序列，后来
 
 > 注意：现在很多"AI 产品"背后其实是深度学习，但 **AI ≠ DL，ML ≠ DL**。
 > 另外，AI / ML / DL 只回答"模型怎么来"，和"模型跑在哪"没有关系；算力位置（云端 / 边缘 / 端侧）
-> 见 [basics.md · 云端、边缘、端侧](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#10-云端边缘端侧算力放在哪)。
+> 见 [模型与部署基础 · 云端、边缘、端侧](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#10-云端边缘端侧算力放在哪)。
 
 ## 1. 先看全貌：网络到底在做什么
 
@@ -306,7 +306,7 @@ Transformer 用"注意力"代替循环结构，能并行处理长序列，后来
 少一次读写往往比少一次计算更值钱。
 
 模型就是这些算子连成的图 + 每个算子的权重。结构和权重的区别、以及"什么算同一个模型"，
-见 [basics.md · 模型基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#1-一个模型--结构--参数)。
+见 [模型与部署基础 · 模型基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#1-一个模型--结构--参数)。
 
 ## 5. 全连接网络（MLP）：最基础的决策器
 
@@ -782,8 +782,8 @@ RNN/LSTM 只在任务确实需要强记忆、且模型很小时才考虑。
 后训练量化（PTQ）发生在训练结束、权重固定之后——没有训练好的 float 权重，就没有东西可量化；
 TQT 会在此基础上再微调 scale（可选权重）。
 
-> 训练得到的是 float32 权重；部署前通常还要量化成 int8，见 [basics.md · 量化概念](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#5-量化概念)。
-> 训练集、验证集、测试集、校准集的分工，见 [basics.md · 四种数据集](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md#9-四种数据集训练验证测试校准)。
+> 训练得到的是 float32 权重；部署前通常还要量化成 int8，见 [模型与部署基础 · 量化概念](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#5-量化概念)。
+> 训练集、验证集、测试集、校准集的分工，见 [模型与部署基础 · 四种数据集](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md#9-四种数据集训练验证测试校准)。
 
 ### 8.6 实战：一个 2→2→1 的全连接网络
 
@@ -1090,12 +1090,12 @@ loss = (1.63 - 3)² ≈ 1.88
 2. **CNN**：用 MobileNet/小 CNN 做图像分类，重点看"尺寸变小、通道变多"；
 3. **检测**：YOLO 系列，重点看 backbone → neck → head → NMS 各自解决什么问题；
 4. **时序**：IMU 手势（C5 笔记）看 1D CNN；TCN 可对照 esp-dl 的流式模型示例；
-5. **端侧优化**：量化（[basics.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)）、算子融合、输入尺寸、内存规划；
+5. **端侧优化**：量化（[模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)）、算子融合、输入尺寸、内存规划；
 6. **进阶**：自定义算子（P4 笔记第 6 章）、量化调优（AutoQuant / TQT）。
 
 ## 相关文档
 
-- **[basics.md · 模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/basics.md)** ——
+- **[模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)** ——
   模型怎么量化、怎么装进 MCU（张量与布局、量化误差、FlatBuffers）。
 - **[esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4)** ——
   esp-dl + esp-ppq 的量化、部署与实战踩坑。
@@ -1103,4 +1103,4 @@ loss = (1.63 - 3)² ≈ 1.88
   esp-nn + TFLite Micro 的手势识别实战。
 - 回到 [仓库首页](https://github.com/yh-xh/ESP32-TinyML)。
 
-> 建议顺序：本文（网络结构）→ basics.md（量化与部署）→ 对应平台分支（实战）。
+> 建议顺序：本文（网络结构）→ 模型与部署基础（量化与部署）→ 对应平台分支（实战）。
