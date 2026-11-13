@@ -190,7 +190,21 @@ if (sumabs > CONFIG_TRIGGER_THRESHOLD) {  // 默认 100 dps
 
 ### 4.4 训练：一个小 CNN
 
-README 的数据处理：
+**为什么是 Keras？它在链路里的位置**
+
+C5 的部署格式是 `.tflite`，而 TFLite Converter 最成熟的输入就是 Keras 模型。
+Keras 只是 **PC 端的训练前端**：负责搭网络和训练；底层计算由 TensorFlow 执行；
+训练完由 TFLite Converter 转成 `.tflite`；板子上只跑 TFLM + esp-nn，
+**Keras 和 TensorFlow 都不上设备**。
+
+```
+Keras（搭网络 + 训练）→ TensorFlow（计算）→ TFLite Converter（转换/量化）→ .tflite → TFLM + esp-nn（C5）
+```
+
+不用 Keras 也能训练（比如 PyTorch → ONNX → TensorFlow → TFLite），只是转换链更长；
+Keras 是官方生态里最省事的一条。
+
+然后 README 的数据处理：
 
 ```python
 o_data       = pd.read_csv('./o.csv', header=None)
