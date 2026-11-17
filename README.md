@@ -343,7 +343,7 @@ tflite_model = converter.convert()
 | 输入 scale/zero_point | 同上 | 预处理映射错误，准确率骤降 |
 | 输出 shape/dtype | `get_output_details()` | 索引错、反量化错 |
 | 输出 scale/zero_point | 同上 | 概率全错 |
-| 实际算子列表 | `tf.lite.experimental.Analyzer.analyze(...)` 或 Netron | 端侧 `Didn't find op` |
+| 实际算子列表 | `tf.lite.experimental.Analyzer.analyze(model_content=tflite_model)` 或 Netron | 端侧 `Didn't find op` |
 
 C5 和 S3 的算子列表：
 
@@ -815,7 +815,7 @@ python -m esptool --chip esp32s3 -p /dev/ttyACM0 -b 460800 \
 | 量化 | float32 | int8 |
 | arena | 50 KB | 160 KB 请求 / 约 118 KB 实用 |
 | 推理 | 未单独记录 | 49.6 ms |
-| 循环帧率 | 150 ms/次滑窗 | 16 fps（含日志） |
+| 循环/推理节拍 | 150 ms/次滑窗 | 16 fps（含日志） |
 | 平台 | ESP32-C5 240 MHz | ESP32-S3 240 MHz |
 
 ### 11.3 从重训练到部署的一页检查
