@@ -1,9 +1,9 @@
-# ESP32-P4 / esp-dl 学习笔记
+# ESP32-P4 / esp-dl + esp-ppq 学习笔记
 
 > **适用环境**：ESP-IDF v5.5.3 · esp-dl（本地 checkout）· esp-ppq（Python 量化环境）· ESP32-P4
 > **记录时间**：2026-10 ~ 2026-11
 > 内容以实测为准，版本更新后部分 API 可能变化，以源码为准。
-> 配套的 esp-nn / TFLite Micro 笔记见 [esp32-c5 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5)。
+> 配套的 TFLite Micro + esp-nn 笔记见 [tflite-micro-esp-nn 分支](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn)。
 
 ---
 
