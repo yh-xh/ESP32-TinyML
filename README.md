@@ -165,7 +165,7 @@ S3 的 person_detection 模型要求 96×96 单通道灰度：
 数据采集方式：
 
 - 复用摄像头 Web demo 的 `/camera` 返回 JPEG，或把 JPEG 存到 SD 卡再拷到 PC；
-- PC 端统一 `cv2.imread(..., IMREAD_GRAYSCALE)` + `cv2.resize(..., (96,96))`；
+- PC 端统一 `cv2.imread(path, cv2.IMREAD_GRAYSCALE)` + `cv2.resize(img, (96, 96))`；
 - 正类：不同人、光照、角度、距离、遮挡；负类：背景、天空、墙面、物体、模糊画面、部分人脸；
 - 负类要覆盖真实场景，否则“像人脸的背景”会被误判成正类。
 
