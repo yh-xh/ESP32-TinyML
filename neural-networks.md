@@ -1152,9 +1152,9 @@ loss = (1.63 - 3)² ≈ 1.88
 
 - **[模型与部署基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)** ——
   模型怎么量化、怎么装进 MCU（张量与布局、量化误差、FlatBuffers）。
-- **[esp32-p4 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-p4)** ——
+- **[esp-dl-esp-ppq 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq)** ——
   esp-dl + esp-ppq 的量化、部署与实战踩坑。
-- **[esp32-c5 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp32-c5)** ——
+- **[tflite-micro-esp-nn 分支](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn)** ——
   esp-nn + TFLite Micro 的手势识别实战。
 - 回到 [仓库首页](https://github.com/yh-xh/ESP32-TinyML)。
 
