@@ -3,7 +3,7 @@
 > **适用环境**：ESP-IDF v5.5.2（C5）/ v5.5.3（S3）· esp-tflite-micro 1.3.4 / 1.4.3 · esp-nn 1.2.5 / 1.5.0 · ESP32-C5 / XIAO ESP32S3 Sense
 > **记录时间**：2026-11
 > 本分支由原来的 ESP32-C5 手势识别笔记和 XIAO ESP32-S3 人形检测笔记合并而来。两条笔记原本各自按项目组织，这里按**一条完整链路**重新整理：数据 → 重训练 → 转换/量化 → 模型进固件 → 运行时 → 实测验证。
-> 公共基础见主分支 [model-deployment.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)；另一条路线见 [esp-dl + esp-ppq 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq)。
+> 公共基础见主分支 [model-deployment.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)；另一条路线见 [esp-dl 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl)。
 
 > **两个案例的分工**
 > - **ESP32-C5 手势识别**：IMU 时序数据、3 分类、float32 模型。它把一个完整的“采集 → 训练 → TFLM 部署 → 滑窗/去抖”流程走通，同时也是一个反面教材：**float32 模型不会走 esp-nn 的 int8 加速内核**。
@@ -49,7 +49,7 @@
 - 模型可以量化到 int8，且目标芯片有 esp-nn 优化（S3/P4 最好，C5 走通用优化）；
 - 需要跨平台、快速验证，而不是深度定制 Espressif 的 `.espdl` 格式。
 
-如果做人脸检测/识别并想直接用 esp-dl 的检测框、关键点、识别后处理，走 [esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq) 更省事。
+如果做人脸检测/识别并想直接用 esp-dl 的检测框、关键点、识别后处理，走 [esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl) 更省事。
 
 ### 1.2 两个案例
 
@@ -716,7 +716,7 @@ person score:13%, no person score 87%
 - 能接受 int8 量化，目标芯片是 S3/P4（esp-nn 优化最好）；
 - 任务是分类/回归，不需要 esp-dl 的检测框/关键点后处理。
 
-如果要做人脸检测/识别、需要现成的框/关键点/embedding 后处理，选 [esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq) 更合适。二分类“人脸/非人脸”仍然可以走本文路线，但“识别是谁”不是二分类，需要 embedding + 相似度。
+如果要做人脸检测/识别、需要现成的框/关键点/embedding 后处理，选 [esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl) 更合适。二分类“人脸/非人脸”仍然可以走本文路线，但“识别是谁”不是二分类，需要 embedding + 相似度。
 
 ---
 
@@ -843,7 +843,7 @@ python -m esptool --chip esp32s3 -p /dev/ttyACM0 -b 460800 \
 - ESP-IDF 编程指南：<https://docs.espressif.com/projects/esp-idf/>
 - XIAO ESP32S3 Sense 入门：<https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/>
 - 公共基础：[model-deployment.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)、[neural-networks.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/neural-networks.md)
-- 另一条路线：[esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq)
+- 另一条路线：[esp-dl + esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl)
 
 ---
 
