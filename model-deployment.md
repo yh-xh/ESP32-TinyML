@@ -1,7 +1,7 @@
 # 模型与部署基础（公共篇）
 
-> 这是 [esp-dl + esp-ppq 笔记](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq) 和
-> [TFLite Micro + esp-nn 笔记](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn) 的**公共基础**：
+> 这是 [esp-dl + esp-ppq 笔记](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl) 和
+> [TFLite Micro + esp-nn 笔记](https://github.com/yh-xh/ESP32-TinyML/tree/TFLite-micro) 的**公共基础**：
 > 模型是什么、怎么量化、怎么装进 MCU。
 > 两份笔记的第 2 章都指向这里，平台特有的内容各自保留。
 >
@@ -446,7 +446,7 @@ TQT 在普通校准之后，会额外用"浮点输出和量化输出的 MSE"微�
 | 运行时 | TFLM 解释器 + `tensor_arena` | esp-dl execution plan + 静态内存规划 |
 | 算子 | esp-nn kernel + TFLM 参考实现 | esp-dl Module + 芯片 SIMD |
 | 适合 | 通用 TFLite 生态、跨平台 | 检测/识别、深度调量化、吃 P4 SIMD |
-| 笔记 | [tflite-micro-esp-nn 分支](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn) | [esp-dl-esp-ppq 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq) |
+| 笔记 | [TFLite-micro 分支](https://github.com/yh-xh/ESP32-TinyML/tree/TFLite-micro) | [esp-dl 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl) |
 
 > 两条路线的层级关系（TinyML / TFLM / esp_nn / esp-dl）在各分支第 1 章有更详细的说明。
 
@@ -695,9 +695,9 @@ PTQ、TQT、校准集、scale 的细节见 [第 5 节](#5-量化概念)。
 
 - **[neural-networks.md · 神经网络基础](https://github.com/yh-xh/ESP32-TinyML/blob/main/neural-networks.md)** ——
   从感知机到深度学习的历史、AI/ML/DL 关系、网络结构（MLP/CNN/TCN）与训练循环。
-- **[esp-dl-esp-ppq 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq)** ——
+- **[esp-dl 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl)** ——
   esp-dl + esp-ppq：量化调优、C++ 部署、自定义算子、esp-who。
-- **[tflite-micro-esp-nn 分支](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn)** ——
+- **[TFLite-micro 分支](https://github.com/yh-xh/ESP32-TinyML/tree/TFLite-micro)** ——
   esp-nn + TFLite Micro：手势识别实战、软浮点、arena。
 - 回到 [仓库首页](https://github.com/yh-xh/ESP32-TinyML)。
 

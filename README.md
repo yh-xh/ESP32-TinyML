@@ -9,8 +9,8 @@
 
 | 平台 | 技术路线 | 分支 | 内容概览 |
 |---|---|---|---|
-| **ESP32-P4** | esp-dl + esp-ppq（Espressif 自研运行时） | [esp-dl-esp-ppq](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl-esp-ppq) | esp-dl 量化与部署、自定义算子、esp-who 框架、P4 平台规格与 RISC-V/PIE |
-| **ESP32-C5 / ESP32-S3（XIAO Sense）** | TFLite Micro + esp-nn（通用生态路线） | [tflite-micro-esp-nn](https://github.com/yh-xh/ESP32-TinyML/tree/tflite-micro-esp-nn) | TFLM/esp-nn 运行时、手势识别、人形检测、从重训练到部署、实测验证与踩坑 |
+| **ESP32-P4** | esp-dl + esp-ppq（Espressif 自研运行时） | [esp-dl](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl) | esp-dl 量化与部署、自定义算子、esp-who 框架、P4 平台规格与 RISC-V/PIE |
+| **ESP32-C5 / ESP32-S3（XIAO Sense）** | TFLite Micro + esp-nn（通用生态路线） | [TFLite-micro](https://github.com/yh-xh/ESP32-TinyML/tree/TFLite-micro) | TFLM/esp-nn 运行时、手势识别、人形检测、从重训练到部署、实测验证与踩坑 |
 
 ## 公共基础
 
@@ -29,8 +29,8 @@
 git clone https://github.com/yh-xh/ESP32-TinyML.git
 cd ESP32-TinyML
 
-git checkout esp-dl-esp-ppq       # ESP32-P4 / esp-dl + esp-ppq 笔记
-git checkout tflite-micro-esp-nn  # ESP32-C5 / ESP32-S3 / TFLite Micro + esp-nn 笔记
+git checkout esp-dl       # ESP32-P4 / esp-dl + esp-ppq 笔记
+git checkout TFLite-micro  # ESP32-C5 / ESP32-S3 / TFLite Micro + esp-nn 笔记
 ```
 
 ## 两条路线怎么选
@@ -45,6 +45,6 @@ git checkout tflite-micro-esp-nn  # ESP32-C5 / ESP32-S3 / TFLite Micro + esp-nn 
 
 ## 说明
 
-- `esp-dl-esp-ppq` 与 `tflite-micro-esp-nn` 的 git 历史相互独立；后者由原 `esp32-c5` 和 `xiao_esp32-s3` 笔记合并而来；
+- `esp-dl` 与 `TFLite-micro` 的 git 历史相互独立；后者由原 `esp32-c5` 和 `xiao_esp32-s3` 笔记合并而来；
 - 笔记持续更新，内容以各分支的 README 为准；
 - 原 `esp32-p4-notes` / `esp32-c5-notes` 仓库已合并到这里；原 `esp32-p4` / `esp32-c5` / `xiao_esp32-s3` 分支已改名为上述两条路线分支。
