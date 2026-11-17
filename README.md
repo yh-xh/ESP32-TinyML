@@ -1181,6 +1181,17 @@ constexpr int kNotAPersonIndex = 0;
 - 按人/场景/时间划分训练集和测试集，不要随机打乱同一段视频的相邻帧，否则准确率会虚高。
 - 数据量：每类几百到几千张起步；先跑通再扩。
 
+采图可以复用之前的摄像头 Web demo（`/camera` 返回 JPEG），或者把 JPEG 存到 SD 卡再拷到 PC。PC 端统一转灰度、缩放到 96×96：
+
+```python
+import cv2
+
+img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+img = cv2.resize(img, (96, 96))
+```
+
+正负类分目录存放；文件名不要带中文/空格，后面生成 CSV 或 `ImageDataGenerator` 更省事。
+
 ### 9.3 训练一个小 CNN
 
 Keras 示例（结构可按需调整）：
