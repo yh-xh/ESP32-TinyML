@@ -4,6 +4,7 @@
 > **记录时间**：2026-11
 > 本分支由原来的 ESP32-C5 手势识别笔记和 XIAO ESP32-S3 人形检测笔记合并而来。两条笔记原本各自按项目组织，这里按**一条完整链路**重新整理：数据 → 重训练 → 转换/量化 → 模型进固件 → 运行时 → 实测验证。
 > 公共基础见主分支 [model-deployment.md](https://github.com/yh-xh/ESP32-TinyML/blob/main/model-deployment.md)；另一条路线见 [esp-dl 分支](https://github.com/yh-xh/ESP32-TinyML/tree/esp-dl)。
+> 相关：[TensorFlow.md](TensorFlow.md) —— TensorFlow/Keras/TFLite/TFLM 的关系与差异。
 
 > **两个案例的分工**
 > - **ESP32-C5 手势识别**：IMU 时序数据、3 分类、float32 模型。它把一个完整的“采集 → 训练 → TFLM 部署 → 滑窗/去抖”流程走通，同时也是一个反面教材：**float32 模型不会走 esp-nn 的 int8 加速内核**。
