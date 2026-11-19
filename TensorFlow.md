@@ -92,7 +92,7 @@ Keras 训练
 | SavedModel | 包含图、权重、签名的部署格式 |
 | 设备/分布式 | CPU/GPU/TPU、多机多卡 |
 
-### 关键区别
+### 2.1 关键区别
 
 - **Eager**：像 NumPy 一样逐行执行，调试方便；
 - **Graph / `tf.function`**：先建图再执行，性能好，可导出；
@@ -103,6 +103,147 @@ Keras 训练
 - 知道“模型”最终是一张图 + 权重；
 - 知道训练图和推理图的区别；
 - 知道 SavedModel/`.tflite` 是怎么来的。
+
+### 2.2 静态计算图与动态计算图
+
+这是 TensorFlow 里最容易混淆的概念之一。先给一句话：
+
+- **静态图（define-and-run）**：先把整张计算图定义好，再喂数据执行；
+- **动态图（define-by-run）**：代码执行到哪，图就建到哪，运算立即发生。
+
+#### 静态图
+
+静态图的流程是：
+
+```text
+定义图 → 编译/优化 → 喂数据 → 执行
+```
+
+TensorFlow 1.x 的 `Graph` + `Session` 是典型代表：
+
+```python
+g = tf.Graph()
+with g.as_default():
+    x = tf.compat.v1.placeholder(tf.float32, [None, 1])
+    y = tf.matmul(x, W) + b
+
+with tf.compat.v1.Session(graph=g) as sess:
+    result = sess.run(y, feed_dict={x: data})
+```
+
+特点：
+
+- 图在运行前就固定；
+- 可以先做常量折叠、算子融合、内存规划；
+- 适合部署和跨语言执行；
+- 调试相对麻烦，控制流要用 `tf.cond` / `tf.while_loop` 表达；
+- 输入 shape 通常需要提前确定。
+
+TFLite / TFLM 的推理图本质上也是静态图：`.tflite` 里已经固化了算子、权重、形状和量化参数，运行时只负责执行。
+
+#### 动态图
+
+动态图的流程是：
+
+```text
+写一行 → 执行一行 → 图按需生成
+```
+
+TensorFlow 2.x 默认 Eager Execution，PyTorch 也是典型动态图：
+
+```python
+x = tf.constant([[1.0]])
+y = model(x)   # 立即执行，可以马上 print/断点
+```
+
+特点：
+
+- 调试直观，像普通 Python；
+- 可以用 Python 的 `if` / `for` 控制流；
+- 输入 shape 可以更灵活；
+- 每次执行有 Python 开销；
+- 部署前通常要“追踪/导出”成静态图。
+
+#### 对比表
+
+| 维度 | 静态图 | 动态图 |
+|---|---|---|
+| 建图时机 | 执行前 | 执行时 |
+| 执行方式 | 先建图，再 `Session.run` / 解释器执行 | 运算立即执行 |
+| 调试 | 较难，需看图/日志 | 直观，可断点/打印 |
+| 控制流 | `tf.cond` / `tf.while_loop` | Python `if` / `for` |
+| 输入形状 | 通常固定 | 更灵活 |
+| 优化空间 | 大，可全局优化 | 局部优化为主 |
+| 部署 | 方便，图可序列化 | 需先 trace/export |
+| 代表 | TF1 Graph、TFLite、TFLM | TF2 Eager、PyTorch |
+| 适合 | 推理、部署、性能优化 | 研究、调试、快速迭代 |
+
+#### TensorFlow 2 的混合模式
+
+TF2 不是“只有动态图”。它默认 Eager，但可以通过 `tf.function` 把 Python 函数追踪成图：
+
+```python
+@tf.function
+def step(x):
+    return model(x)
+```
+
+第一次调用时，TensorFlow 会追踪这个函数，生成一张图并缓存；后续调用复用这张图。遇到新的输入 shape 时可能重新追踪。
+
+Keras 的 `model.fit` 默认也是这种混合模式：
+
+- Python 层负责训练循环、回调、数据管道；
+- 内部把 `train_step` 包进 `tf.function`，实际计算走图。
+
+如果你想强制纯动态训练：
+
+```python
+model.fit(..., run_eagerly=True)
+```
+
+方便调试，但会慢一些。
+
+#### 怎么判断当前在哪种模式
+
+```python
+import tensorflow as tf
+
+print("eager:", tf.executing_eagerly())   # 顶层一般是 True
+print("run_eagerly:", model.run_eagerly)  # 默认 None/False，fit 内部走图
+```
+
+- `tf.executing_eagerly() == True`：当前是动态执行；
+- 在 `@tf.function` 内部，它会是 `False`；
+- `model.run_eagerly` 为 `True` 时，`fit` 不走编译图。
+
+#### 对应到我们的训练和部署
+
+| 阶段 | 图形态 |
+|---|---|
+| `train_sine.py` 搭模型、单步调试 | 动态/Eager |
+| `model.fit` 训练 | 混合：Keras 内部 `tf.function` 图 |
+| `model.predict` | 混合/图 |
+| `.keras` 文件 | 保存结构和权重，不是“运行中的图” |
+| `TFLiteConverter` | 把模型追踪/固化成静态图 |
+| `.tflite` | 静态推理图 |
+| TFLM `MicroInterpreter` | 执行静态图 |
+
+所以：
+
+- **训练代码看起来是动态的**，因为 TF2 默认 Eager；
+- **训练过程内部有图**，因为 Keras 用 `tf.function` 加速；
+- **部署到 XIAO 的 `.tflite` 是静态图**，TFLM 只负责按图执行。
+
+#### 常见误区
+
+| 误区 | 事实 |
+|---|---|
+| “TF2 只有动态图” | 还有 `tf.function`，Keras 内部大量使用 |
+| “Keras `fit` 是纯动态” | 默认会编译训练图，`run_eagerly=True` 才是纯动态 |
+| “静态图一定更快” | 静态图优化空间大，但有编译/固定形状的代价 |
+| “动态图不能部署” | 可以 trace/export 成静态图再部署 |
+| “TFLite 转换只是改后缀” | 它要追踪、固化、优化、量化整张图 |
+| “TFLM 能跑任意动态控制流” | 只支持有限的算子/控制流子集 |
 
 ---
 
