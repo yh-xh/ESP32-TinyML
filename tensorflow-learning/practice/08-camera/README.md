@@ -21,6 +21,14 @@ OV2640 取帧
 /home/v/esp/xiao_esp32s3/tflite_person/
 ```
 
+学习项目里也放了源码副本：
+
+```text
+practice/08-camera/firmware/
+```
+
+本机工程是完整可构建的；学习项目里的 `firmware/` 是源码副本，不带 `managed_components/`、`sdkconfig` 和 `build/`。第一次构建需要联网拉 `esp-tflite-micro` 和 `esp32-camera`，网络不通时可以从本机工程复制依赖。
+
 它已经包含：
 
 ```text
@@ -38,6 +46,21 @@ source /home/v/esp/esp-idf/export.sh
 cd /home/v/esp/xiao_esp32s3/tflite_person
 idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
+```
+
+如果从学习项目里的副本构建：
+
+```bash
+cd practice/08-camera/firmware
+idf.py set-target esp32s3
+idf.py build
+```
+
+本机构建结果：
+
+```text
+person_detection.bin  0xb9590 字节（约 759 KB）
+app 分区剩余           61%
 ```
 
 如果端口被占用，先关掉其他 `idf.py monitor`：
