@@ -17,7 +17,7 @@
 | 03 | [用 Keras 训练第一个模型](03-first-keras-model/README.md) |
 | 04 | [验证集、过拟合、EarlyStopping](04-train-and-evaluate/README.md) |
 | 05 | [CNN / 1D CNN：卷积、池化、分类头](05-cnn/README.md) |
-| 06 | 导出模型、转 int8 TFLite |
+| 06 | [转 int8 TFLite：校准、解释器、Netron](06-tflite/README.md) |
 | 07 | 上 XIAO：TFLM + esp-nn |
 
 ## 怎么用
