@@ -24,6 +24,14 @@ practice/06-tflite/image_cnn_int8.tflite
 practice/07-xiao/firmware/
 ```
 
+注意：`firmware/` 不包含 `managed_components/`、`sdkconfig` 和 `build/`。第一次构建时，IDF 会从 Espressif 组件仓库拉取 `esp-tflite-micro` 和 `esp-nn`；如果网络连不上 `components-file.espressif.com`，可以直接用本机已经下好依赖的工程，或者把依赖复制过来：
+
+```bash
+cp -a /home/v/esp/xiao_esp32s3/tflite_cnn_hello/managed_components practice/07-xiao/firmware/
+cp /home/v/esp/xiao_esp32s3/tflite_cnn_hello/sdkconfig practice/07-xiao/firmware/
+cp /home/v/esp/xiao_esp32s3/tflite_cnn_hello/dependencies.lock practice/07-xiao/firmware/
+```
+
 ## 整条链路
 
 ```text
@@ -164,11 +172,19 @@ cd /home/v/esp/xiao_esp32s3/tflite_cnn_hello
 cd practice/07-xiao/firmware
 ```
 
-构建：
+如果目录里还没有 `sdkconfig`，先设置目标芯片：
+
+```bash
+idf.py set-target esp32s3
+```
+
+然后构建：
 
 ```bash
 idf.py build
 ```
+
+注意：要进入 `firmware/` 再执行 `idf.py`。在 `07-xiao/` 这一层没有 `CMakeLists.txt`，会报 `CMakeLists.txt not found`。
 
 本机构建结果：
 
@@ -185,6 +201,18 @@ tensor_arena           0x8000（32 KB）
 
 ```bash
 idf.py -p /dev/ttyACM0 flash monitor
+```
+
+如果提示端口被占用：
+
+```text
+Could not exclusively lock port /dev/ttyACM0
+```
+
+先关掉其他串口工具（包括另一个 `idf.py monitor`）：
+
+```bash
+fuser -v /dev/ttyACM0
 ```
 
 如果 `/dev/ttyACM0` 不存在，先确认 USB 线是数据线、板子进了下载模式；VMware 下如果 `idf.py flash` 找不到端口，可以用 esptool 加 `--before=no_reset` 作为备选。
